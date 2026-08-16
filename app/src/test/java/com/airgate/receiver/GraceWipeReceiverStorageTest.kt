@@ -19,26 +19,31 @@ package com.airgate.receiver
 import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import com.airgate.data.repository.SecurityStateRepository
 import com.airgate.domain.model.AppConfig
 import com.airgate.domain.model.SecurityState
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
+import com.airgate.testutil.crypto.AndroidKeyStoreRule
+import org.junit.Rule
 
 /**
- * On-device verification of the grace-wipe deadline guard against the real
+ * JVM verification (Robolectric) of the grace-wipe deadline guard against the real
  * monotonic clock. A scheduled wipe only executes once its monotonic deadline
  * has genuinely elapsed; a wall-clock rollback cannot make an elapsed deadline
  * look unreached because the guard never consults the wall clock.
  */
 @RunWith(AndroidJUnit4::class)
-class GraceWipeReceiverInstrumentedTest {
+class GraceWipeReceiverStorageTest {
+
+    @get:Rule
+    val androidKeyStoreRule = AndroidKeyStoreRule()
 
     private val context: Context
-        get() = InstrumentationRegistry.getInstrumentation().targetContext
+        get() = ApplicationProvider.getApplicationContext<Context>()
 
     private fun armCountdownRepository(): SecurityStateRepository {
         val prefs = context.getSharedPreferences(

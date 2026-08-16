@@ -27,8 +27,8 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import com.airgate.data.crypto.PinManager
 import com.airgate.data.repository.PinLockoutPolicy
 import com.airgate.data.repository.SecurityStateRepository
@@ -38,6 +38,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
+import com.airgate.testutil.crypto.AndroidKeyStoreRule
 
 /**
  * Rendered-behavior tests for [PinVerifyDialog]: verifies the fail-closed gate
@@ -54,7 +56,11 @@ import org.junit.runner.RunWith
  * incorrect branches wait (real time) for the async result via waitUntil.
  */
 @RunWith(AndroidJUnit4::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class PinVerifyDialogTest {
+
+    @get:Rule
+    val androidKeyStoreRule = AndroidKeyStoreRule()
 
     @get:Rule
     val composeRule = createComposeRule()
@@ -176,7 +182,7 @@ class PinVerifyDialogTest {
     }
 
     private fun freshPrefs(): SharedPreferences {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val context = ApplicationProvider.getApplicationContext<Context>()
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().clear().commit()
         return prefs

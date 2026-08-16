@@ -19,8 +19,8 @@ package com.airgate.ui.components
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import com.airgate.dhizuku.DhizukuManager
 import com.airgate.domain.model.AppConfig
 import com.airgate.policy.DevicePolicyEnforcer
@@ -29,6 +29,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
+import android.content.Context
 
 /**
  * Rendered-behavior tests for the arming gates in the UI: the protection switch
@@ -39,13 +41,14 @@ import org.junit.runner.RunWith
  * separately.
  */
 @RunWith(AndroidJUnit4::class)
-class ArmingGateUiInstrumentedTest {
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+class ArmingGateUiTest {
 
     @get:Rule
     val composeRule = createComposeRule()
 
     private val context
-        get() = InstrumentationRegistry.getInstrumentation().targetContext
+        get() = ApplicationProvider.getApplicationContext<Context>()
 
     @Test
     fun dashboardSwitch_refusesToArm_whenNotificationsAreNotGranted() {

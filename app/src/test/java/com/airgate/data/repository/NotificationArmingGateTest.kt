@@ -16,37 +16,45 @@
 
 package com.airgate.data.repository
 
+import android.app.Application
+import android.app.NotificationManager
 import android.content.Context
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import com.airgate.domain.model.AppConfig
+import com.airgate.testutil.crypto.AndroidKeyStoreRule
+import com.airgate.testutil.crypto.ShadowNotificationManagerWithFullScreenIntent
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.FileInputStream
+import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
 
 /**
- * On-device verification of the arming gate: the watchdog can only be *newly*
- * enabled while the app can post notifications. Uses a throwaway prefs file so no
- * real app state is touched.
+ * JVM verification (Robolectric) of the arming gate: the watchdog can only be
+ * *newly* enabled while the app can post notifications. Uses a throwaway prefs
+ * file so no real app state is touched.
  *
- * The granted branch is exercised against the real permission via `pm grant` (which
- * does not disturb a running process). The denied branch is exercised by injecting
- * the same decision a revoked permission produces (`areNotificationsEnabled() ==
- * false`), because revoking POST_NOTIFICATIONS mid-instrumentation force-stops the
- * app process that is running the test; the decision logic is covered exhaustively
- * in the JVM suite.
+ * The granted branch is exercised against the simulated permission and
+ * notification state. The denied branch is exercised by injecting the same
+ * decision a revoked permission produces (`areNotificationsEnabled() == false`);
+ * the decision logic is covered exhaustively in the JVM suite.
  */
 @RunWith(AndroidJUnit4::class)
-class NotificationArmingGateInstrumentedTest {
+@Config(shadows = [ShadowNotificationManagerWithFullScreenIntent::class])
+class NotificationArmingGateTest {
+
+    @get:Rule
+    val androidKeyStoreRule = AndroidKeyStoreRule()
 
     private val context: Context
-        get() = InstrumentationRegistry.getInstrumentation().targetContext
+        get() = ApplicationProvider.getApplicationContext<Context>()
 
     @Test
     fun arming_isAccepted_whenNotificationsAndFullScreenAlertsAreGranted() {
-        setNotificationsPermission(granted = true)
+        grantNotifications()
         // The real notification-path check: notifications AND full-screen alerts
         // (the full-screen-intent permission is independently revocable on 14+).
         val repository = repository(provider = {
@@ -86,16 +94,13 @@ class NotificationArmingGateInstrumentedTest {
         return repository
     }
 
-    private fun setNotificationsPermission(granted: Boolean) {
-        val pkg = context.packageName
-        val permission = "android.permission.POST_NOTIFICATIONS"
-        val command = if (granted) "pm grant $pkg $permission" else "pm revoke $pkg $permission"
-        val pfd = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
-        try {
-            FileInputStream(pfd.fileDescriptor).use { it.readBytes() }
-        } finally {
-            pfd.close()
-        }
-        Thread.sleep(500)
+    private fun grantNotifications() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        shadowOf(app).grantPermissions(
+            "android.permission.POST_NOTIFICATIONS",
+            "android.permission.USE_FULL_SCREEN_INTENT"
+        )
+        shadowOf(context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .setNotificationsEnabled(true)
     }
 }

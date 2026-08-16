@@ -149,4 +149,4 @@ jobs:
           force-avd-creation: false
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
-          script: ./gradlew :app:connectedDebugAndroidTest -Pandroid.injected.build.abi=x86_64
+          script: ./gradlew :app:connectedDebugAndroidTest -Pandroid.injected.build.abi=x86_64 -Pandroid.testInstrumentationRunnerArguments.notClass=com.airgate.ui.ScreenshotCaptureTest

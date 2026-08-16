@@ -16,10 +16,14 @@ APK         ?= app/build/outputs/apk/debug/app-debug.apk
 APK_RELEASE ?= $(firstword $(wildcard app/build/outputs/apk/release/*.apk))
 EMULATOR_DEVICE = $(shell $(ADB) devices 2>/dev/null | awk '$$2=="device" && $$1 ~ /^emulator-/ {print $$1; exit}')
 PHONE_DEVICE    = $(shell $(ADB) devices 2>/dev/null | awk '$$2=="device" && $$1 !~ /^emulator-/ {print $$1; exit}')
+# Focused-run filters: CLASS selects one instrumented test class (or Class#method),
+# TESTS selects one JVM unit test class/pattern. Both bypass the full suite.
+CLASS ?=
+TESTS ?=
 
 export JAVA_HOME
 
-.PHONY: help build release verify-release unit android-test lint install install-android-phone update launch verify clean logcat screens screens-dark mockups mockups-only emulator emulator-start emulator-stop
+.PHONY: help build release verify-release unit android-test android-test-focused unit-focused lint install install-android-phone update launch verify clean logcat screens screens-dark mockups mockups-only emulator emulator-start emulator-stop
 
 help:
 	@echo "Airgate development commands"
@@ -28,6 +32,8 @@ help:
 	@echo "  make verify-release   build release APK and verify permissions + signature"
 	@echo "  make unit             run JVM unit tests"
 	@echo "  make android-test     run instrumented tests on connected device/emulator"
+	@echo "  make android-test-focused CLASS=com.pkg.Test  run one instrumented class (or Class#method) — fast iteration"
+	@echo "  make unit-focused TESTS='*Name*'  run one JVM unit test class/pattern — fast iteration"
 	@echo "  make lint             run Android lint on the debug variant"
 	@echo "  make install          build + install the app on the emulator"
 	@echo "  make install-android-phone  build + install on a physical phone"
@@ -67,7 +73,25 @@ unit:
 	$(GRADLE) :buildSrc:test :app:testDebugUnitTest
 
 android-test: emulator
-	$(GRADLE) :app:connectedDebugAndroidTest
+	$(GRADLE) :app:connectedDebugAndroidTest \
+		-Pandroid.testInstrumentationRunnerArguments.notClass=com.airgate.ui.ScreenshotCaptureTest
+
+# Run only the given instrumented test class(es) on the connected device/emulator
+# (optionally a single method as Class#method). This is the fast iteration loop for
+# one change; the full suite stays the pre-merge gate. ScreenshotCaptureTest is
+# always excluded from suite runs — it is the `make screens` screenshot driver,
+# not an assertion test — and still runs explicitly from the screens targets.
+android-test-focused: emulator
+	@test -n "$(CLASS)" || { echo "error: set CLASS=com.airgate.YourTestClass (optionally Class#method)"; exit 1; }
+	$(GRADLE) :app:connectedDebugAndroidTest \
+		-Pandroid.testInstrumentationRunnerArguments.class=$(CLASS) \
+		-Pandroid.testInstrumentationRunnerArguments.notClass=com.airgate.ui.ScreenshotCaptureTest
+
+# Run only the given JVM unit test class/pattern on the local JVM. Pattern is a
+# `--tests` filter, e.g. TESTS='*RadioStateDetector*' or a fully qualified class.
+unit-focused:
+	@test -n "$(TESTS)" || { echo "error: set TESTS='*Name*' or TESTS='com.airgate.SomeTest'"; exit 1; }
+	$(GRADLE) :buildSrc:test :app:testDebugUnitTest --tests "$(TESTS)"
 
 lint:
 	$(GRADLE) :app:lintDebug

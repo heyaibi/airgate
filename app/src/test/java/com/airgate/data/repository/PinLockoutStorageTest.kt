@@ -17,46 +17,53 @@
 package com.airgate.data.repository
 
 import android.content.Context
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import com.airgate.testutil.crypto.AndroidKeyStoreRule
+import org.junit.Rule
 
 /**
- * On-device verification that the PIN lockout deadline runs on the persistent
- * monotonic clock against real storage: it counts down in real time and survives
- * a reboot (simulated by a fresh repository over the same prefs whose elapsed
- * clock starts near zero).
+ * JVM verification (Robolectric, real SharedPreferences) that the PIN lockout
+ * deadline runs on the persistent monotonic clock: it counts down as the clock
+ * advances and survives a reboot (simulated by a fresh repository over the same
+ * prefs whose elapsed clock starts near zero).
  */
 @RunWith(AndroidJUnit4::class)
-class PinLockoutInstrumentedTest {
+class PinLockoutStorageTest {
+
+    @get:Rule
+    val androidKeyStoreRule = AndroidKeyStoreRule()
 
     private val context: Context
-        get() = InstrumentationRegistry.getInstrumentation().targetContext
+        get() = ApplicationProvider.getApplicationContext<Context>()
 
-    private fun throwawayRepository(): SecurityStateRepository {
+    private fun throwawayRepository(elapsed: FakeElapsed? = null): SecurityStateRepository {
         val prefs = context.getSharedPreferences(
             "pin_lockout_it_${System.nanoTime()}",
             Context.MODE_PRIVATE
         )
         prefs.edit().clear().commit()
-        return SecurityStateRepository(prefs)
+        return if (elapsed != null) {
+            SecurityStateRepository(prefs, null, { true }) { elapsed.nowMs }
+        } else {
+            SecurityStateRepository(prefs)
+        }
     }
 
     @Test
-    fun lockoutCountsDownInRealTime() {
-        val repository = throwawayRepository()
+    fun lockoutCountsDownAsTheClockAdvances() {
+        val elapsed = FakeElapsed()
+        val repository = throwawayRepository(elapsed)
         repository.setPinLockoutUntil(repository.getMonotonicNow() + 2_500L)
 
         assertTrue(repository.getPinLockoutRemainingMs() > 0L)
 
-        // After the deadline passes in real time the lockout is over.
-        val deadline = System.currentTimeMillis() + 6_000L
-        while (repository.getPinLockoutRemainingMs() > 0L && System.currentTimeMillis() < deadline) {
-            Thread.sleep(100)
-        }
+        // Advancing the monotonic clock past the deadline clears the lockout.
+        elapsed.nowMs += 2_500L
         assertEquals(0L, repository.getPinLockoutRemainingMs())
     }
 
@@ -93,5 +100,9 @@ class PinLockoutInstrumentedTest {
 
         assertEquals(0L, repository.getPinLockoutRemainingMs())
         assertEquals(0L, repository.getPinLockoutUntil())
+    }
+
+    private class FakeElapsed {
+        var nowMs: Long = 1_000_000L
     }
 }

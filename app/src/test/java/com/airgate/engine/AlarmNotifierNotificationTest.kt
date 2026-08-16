@@ -16,12 +16,12 @@
 
 package com.airgate.engine
 
+import android.app.Application
 import android.app.Notification
 import android.app.NotificationManager
 import android.content.Context
-import android.os.SystemClock
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import com.airgate.domain.model.BreachEvent
 import com.airgate.domain.model.ResponseTier
 import com.airgate.domain.model.ViolationType
@@ -31,34 +31,35 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.FileInputStream
+import org.robolectric.Shadows.shadowOf
 import java.util.UUID
 
 /**
- * On-device verification of the alarm-notification surface. The full-screen
- * notification is the primary way a wipe countdown reaches the owner, and it only
- * exists when the app is allowed to post notifications.
+ * JVM verification (Robolectric) of the alarm-notification surface. The
+ * full-screen notification is the primary way a wipe countdown reaches the
+ * owner, and it only exists when the app is allowed to post notifications.
  *
- * With POST_NOTIFICATIONS granted (via `pm grant`, which does not disturb a running
- * process) the alarm notification with its full-screen intent must actually be
- * posted. The "not allowed" branch is exercised on-device by injecting the decision
- * (`notificationsAllowed = { false }`) rather than revoking the permission: revoking
- * POST_NOTIFICATIONS mid-instrumentation force-stops the app process that is running
- * the test. The decision logic behind both branches is covered exhaustively in the
- * JVM suite.
+ * With the notification path enabled (simulated permission + notification state)
+ * the alarm notification with its full-screen intent must actually be posted.
+ * The "not allowed" branch is exercised by injecting the decision
+ * (`notificationsAllowed = { false }`) rather than simulating a revoked
+ * permission; the decision logic behind both branches is covered exhaustively
+ * in the JVM suite.
  */
 @RunWith(AndroidJUnit4::class)
-class AlarmNotifierInstrumentedTest {
+class AlarmNotifierNotificationTest {
 
     private val context: Context
-        get() = InstrumentationRegistry.getInstrumentation().targetContext
+        get() = ApplicationProvider.getApplicationContext<Context>()
 
     private val notificationManager: NotificationManager
         get() = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
     @Before
-    fun grantNotificationsAndClear() {
-        setNotificationsPermission(granted = true)
+    fun enableNotificationsAndClear() {
+        shadowOf(ApplicationProvider.getApplicationContext<Application>())
+            .grantPermissions("android.permission.POST_NOTIFICATIONS")
+        shadowOf(notificationManager).setNotificationsEnabled(true)
         notificationManager.cancelAll()
     }
 
@@ -105,7 +106,7 @@ class AlarmNotifierInstrumentedTest {
     @Test
     fun alarmNotification_isNotPosted_whenNotificationPathDecidesDisabled() {
         // Mirrors a revoked POST_NOTIFICATIONS: the notifier decides notifications
-        // are not allowed, so nothing may be posted against the real notification
+        // are not allowed, so nothing may be posted against the notification
         // system even though notifications are currently grantable.
         val event = event()
         val notifier = AlarmNotifier(
@@ -210,11 +211,8 @@ class AlarmNotifierInstrumentedTest {
 
     /**
      * Polls for a posted notification instead of asserting on a single snapshot:
-     * [NotificationManager.notify] reaches system_server over binder and the
-     * active-notification list is not guaranteed to reflect it immediately on a
-     * loaded emulator, which makes a synchronous query flaky. Absent an appearance
-     * within the timeout the last observed snapshot is returned so the caller's
-     * assertion message still shows the definitive state.
+     * the shadow records the post synchronously, but keeping the poll keeps the
+     * test robust to any async notification plumbing.
      */
     private fun awaitNotification(id: Int, timeoutMillis: Long = 10_000): Notification? {
         val deadline = System.currentTimeMillis() + timeoutMillis
@@ -222,31 +220,8 @@ class AlarmNotifierInstrumentedTest {
         while (System.currentTimeMillis() < deadline) {
             latest = notificationManager.activeNotifications.firstOrNull { it.id == id }?.notification
             if (latest != null) return latest
-            SystemClock.sleep(50)
+            Thread.sleep(50)
         }
         return latest
-    }
-
-    private fun setNotificationsPermission(granted: Boolean) {
-        val pkg = context.packageName
-        val permission = "android.permission.POST_NOTIFICATIONS"
-        val command = if (granted) "pm grant $pkg $permission" else "pm revoke $pkg $permission"
-        val pfd = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
-        try {
-            FileInputStream(pfd.fileDescriptor).use { it.readBytes() }
-        } finally {
-            pfd.close()
-        }
-        if (granted) {
-            // The grant reaches the notification service over a package broadcast;
-            // wait until the app actually observes it so the "notifications allowed"
-            // decision in the code under test reflects the granted state.
-            val deadline = System.currentTimeMillis() + 10_000
-            while (System.currentTimeMillis() < deadline && !notificationManager.areNotificationsEnabled()) {
-                SystemClock.sleep(50)
-            }
-        } else {
-            Thread.sleep(500)
-        }
     }
 }

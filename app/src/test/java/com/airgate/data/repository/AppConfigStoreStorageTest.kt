@@ -17,27 +17,33 @@
 package com.airgate.data.repository
 
 import android.content.Context
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import com.airgate.domain.model.AppConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import com.airgate.testutil.crypto.AndroidKeyStoreRule
+import org.junit.Rule
 
 /**
- * On-device verification (real SharedPreferences + Android Keystore) that the
+ * JVM verification (Robolectric SharedPreferences + fake AndroidKeyStore over
+ * real JCE crypto) that the
  * removed "reset streak on unlock" setting leaves no trace: saving config never
  * writes its key, an older install's value under that key is purged on save, and
  * a lingering value never disturbs config reads. Uses a throwaway prefs file so
  * no real app state is touched.
  */
 @RunWith(AndroidJUnit4::class)
-class AppConfigStoreInstrumentedTest {
+class AppConfigStoreStorageTest {
+
+    @get:Rule
+    val androidKeyStoreRule = AndroidKeyStoreRule()
 
     private val context: Context
-        get() = InstrumentationRegistry.getInstrumentation().targetContext
+        get() = ApplicationProvider.getApplicationContext<Context>()
 
     private val legacyKey = "config_user_unlock_resets"
 
@@ -65,7 +71,7 @@ class AppConfigStoreInstrumentedTest {
         repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
         repository.saveConfig(AppConfig())
 
-        assertFalse("saving config must purge the legacy value on-device", prefs.contains(legacyKey))
+        assertFalse("saving config must purge the legacy value on the JVM", prefs.contains(legacyKey))
     }
 
     @Test

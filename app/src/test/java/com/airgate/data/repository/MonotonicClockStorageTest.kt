@@ -17,22 +17,22 @@
 package com.airgate.data.repository
 
 import android.content.Context
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * On-device verification of the persistent monotonic clock against the real
+ * JVM verification (Robolectric) of the persistent monotonic clock against the real
  * Android elapsed-realtime clock and real SharedPreferences storage.
  */
 @RunWith(AndroidJUnit4::class)
-class MonotonicClockInstrumentedTest {
+class MonotonicClockStorageTest {
 
     private val context: Context
-        get() = InstrumentationRegistry.getInstrumentation().targetContext
+        get() = ApplicationProvider.getApplicationContext<Context>()
 
     private fun throwawayPrefs(): android.content.SharedPreferences {
         val prefs = context.getSharedPreferences(

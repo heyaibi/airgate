@@ -8,6 +8,9 @@ composeBom = "2026.08.00"
 navigation = "2.9.8"
 junit = "4.13.2"
 junitVersion = "1.3.0"
+testCoreVersion = "1.7.0"
+robolectric = "4.16.1"
+asm = "9.9.1"
 espressoCore = "3.7.0"
 dhizuku = "2.6.0"
 hiddenApiBypass = "6.1"
@@ -30,6 +33,13 @@ hiddenapibypass = { group = "org.lsposed.hiddenapibypass", name = "hiddenapibypa
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
+androidx-test-core = { group = "androidx.test", name = "core", version.ref = "testCoreVersion" }
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+asm = { group = "org.ow2.asm", name = "asm", version.ref = "asm" }
+asm-commons = { group = "org.ow2.asm", name = "asm-commons", version.ref = "asm" }
+asm-tree = { group = "org.ow2.asm", name = "asm-tree", version.ref = "asm" }
+asm-util = { group = "org.ow2.asm", name = "asm-util", version.ref = "asm" }
+asm-analysis = { group = "org.ow2.asm", name = "asm-analysis", version.ref = "asm" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
 androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 androidx-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }

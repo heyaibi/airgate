@@ -24,8 +24,8 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import com.airgate.data.crypto.PinManager
 import com.airgate.data.repository.SecurityStateRepository
 import com.airgate.domain.model.AppConfig
@@ -37,6 +37,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
+import com.airgate.testutil.crypto.AndroidKeyStoreRule
 
 /**
  * Rendered-behavior tests for the persistent in-app alarm surface on the dashboard:
@@ -46,7 +48,11 @@ import org.junit.runner.RunWith
  * scheduled wipe. On-device persistence of the marker is verified too.
  */
 @RunWith(AndroidJUnit4::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class PendingAlarmBannerFlowTest {
+
+    @get:Rule
+    val androidKeyStoreRule = AndroidKeyStoreRule()
 
     @get:Rule
     val composeRule = createComposeRule()
@@ -131,7 +137,7 @@ class PendingAlarmBannerFlowTest {
 
     @Test
     fun pendingAlarm_roundTripsThroughRealPrefsOnDevice() {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val context = ApplicationProvider.getApplicationContext<Context>()
         val prefs = context.getSharedPreferences(
             "pending_alarm_instrumented_${System.currentTimeMillis()}",
             Context.MODE_PRIVATE
@@ -155,7 +161,7 @@ class PendingAlarmBannerFlowTest {
     }
 
     private fun freshPrefs(): SharedPreferences {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val context = ApplicationProvider.getApplicationContext<Context>()
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().clear().commit()
         return prefs

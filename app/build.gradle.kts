@@ -101,6 +101,14 @@ android {
         compose = true
         buildConfig = true
     }
+
+    testOptions {
+        unitTests {
+            // Robolectric runs the migrated "instrumented-style" tests on the JVM
+            // (real merged manifest, resources, SharedPreferences, keystore).
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 dependencies {
@@ -120,6 +128,17 @@ dependencies {
 
 
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.junit)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.asm)
+    testImplementation(libs.asm.commons)
+    testImplementation(libs.asm.tree)
+    testImplementation(libs.asm.util)
+    testImplementation(libs.asm.analysis)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.androidx.compose.ui.test.manifest)
 
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

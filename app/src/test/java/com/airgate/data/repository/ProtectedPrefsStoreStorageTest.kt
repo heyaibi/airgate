@@ -17,8 +17,8 @@
 package com.airgate.data.repository
 
 import android.content.Context
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import com.airgate.data.crypto.KeystoreManager
 import com.airgate.data.crypto.PrefsCrypto
 import com.airgate.domain.model.SecurityState
@@ -33,10 +33,12 @@ import java.security.GeneralSecurityException
 import java.security.KeyStore
 import java.util.Base64
 import javax.crypto.AEADBadTagException
+import com.airgate.testutil.crypto.AndroidKeyStoreRule
+import org.junit.Rule
 
 /**
- * On-device verification of the protected-prefs keyed-MAC and the fail-closed
- * security state, against the real Android Keystore.
+ * JVM verification (Robolectric) of the protected-prefs keyed-MAC and the fail-closed
+ * security state, against the simulated Android Keystore.
  *
  *  - a value written through the store round-trips (encrypt + keyed-MAC);
  *  - modifying any part of a stored blob — ciphertext, MAC, or IV — fails the
@@ -49,10 +51,13 @@ import javax.crypto.AEADBadTagException
  * touched.
  */
 @RunWith(AndroidJUnit4::class)
-class ProtectedPrefsStoreInstrumentedTest {
+class ProtectedPrefsStoreStorageTest {
+
+    @get:Rule
+    val androidKeyStoreRule = AndroidKeyStoreRule()
 
     private val context: Context
-        get() = InstrumentationRegistry.getInstrumentation().targetContext
+        get() = ApplicationProvider.getApplicationContext<Context>()
 
     private fun throwawayRepository(): SecurityStateRepository {
         val prefs = context.getSharedPreferences(
@@ -87,7 +92,7 @@ class ProtectedPrefsStoreInstrumentedTest {
         return Base64.getEncoder().encodeToString(bytes)
     }
 
-    // --- Round-trip through the real Android Keystore ---
+    // --- Round-trip through the simulated Android Keystore ---
 
     @Test
     fun protectedValue_roundTripsThroughTheAndroidKeystore() {
@@ -121,7 +126,7 @@ class ProtectedPrefsStoreInstrumentedTest {
         parts.forEach { Base64.getDecoder().decode(it) }
     }
 
-    // --- Tamper detection on device ---
+    // --- Tamper detection on the JVM ---
 
     @Test
     fun tamperedCiphertext_failsClosed_onDevice() {
@@ -241,7 +246,7 @@ class ProtectedPrefsStoreInstrumentedTest {
         assertTrue(repository.consumeStateTamperFlag())
     }
 
-    // --- AAD (associated-data) key binding on device ---
+    // --- AAD (associated-data) key binding on the JVM ---
 
     @Test
     fun aadMismatch_betweenKeyNames_failsDecrypt_onDevice() {
@@ -326,7 +331,7 @@ class ProtectedPrefsStoreInstrumentedTest {
         assertTrue("a MAC-stripped blob must set the tamper flag", repository.consumeStateTamperFlag())
     }
 
-    // --- Store → crypto AAD wiring on device (the blob must be GCM-bound to its key name) ---
+    // --- Store → crypto AAD wiring on the JVM (the blob must be GCM-bound to its key name) ---
 
     @Test
     fun storeWrittenBlob_decryptsUnderItsOwnKeyNameAad_onDevice() {
@@ -367,7 +372,7 @@ class ProtectedPrefsStoreInstrumentedTest {
         }
     }
 
-    // --- Plaintext never trusted, on device ---
+    // --- Plaintext never trusted, on the JVM ---
 
     @Test
     fun plaintextSecurityState_failsClosed_onDevice() {
@@ -411,7 +416,7 @@ class ProtectedPrefsStoreInstrumentedTest {
         assertTrue(repository.consumeStateTamperFlag())
     }
 
-    // --- Write failures refuse plaintext persistence, on device ---
+    // --- Write failures refuse plaintext persistence, on the JVM ---
 
     @Test
     fun writeWithFailingCrypto_refusesPlaintextState_onDevice() {
@@ -441,7 +446,7 @@ class ProtectedPrefsStoreInstrumentedTest {
 
     @Test
     fun failedWrite_leavesPriorEncryptedValueUntouched_onDevice() {
-        // The refused-write contract on a real device: a working keystore writes
+        // The refused-write contract on the JVM: a working keystore writes
         // an encrypted state, then a broken crypto refuses to overwrite it — the
         // prior encrypted value survives, nothing is persisted in plaintext, and
         // a fresh repository reads the prior value, not the refused one.
@@ -465,7 +470,7 @@ class ProtectedPrefsStoreInstrumentedTest {
         assertFalse(reloaded.consumeStateTamperFlag())
     }
 
-    // --- Key loss / regeneration recovery, on device ---
+    // --- Key loss / regeneration recovery, on the JVM ---
 
     @Test
     fun keystoreKeyLoss_recoversByRegeneration_onDevice() {

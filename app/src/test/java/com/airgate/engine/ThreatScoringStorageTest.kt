@@ -18,8 +18,8 @@ package com.airgate.engine
 
 import android.content.ComponentName
 import android.content.Context
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import com.airgate.data.repository.SecurityStateRepository
 import com.airgate.dhizuku.DhizukuBinderWrapper
 import com.airgate.dhizuku.DhizukuManager
@@ -35,9 +35,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.UUID
+import com.airgate.testutil.crypto.AndroidKeyStoreRule
+import org.junit.Rule
 
 /**
- * On-device verification of the threat-scoring contract: the scoring-group daily
+ * JVM verification (Robolectric) of the threat-scoring contract: the scoring-group daily
  * point may only be consumed by escalation-tier (ALARM_STREAK) events, so a
  * benign record-only event can never starve the wipe trigger.
  *
@@ -46,10 +48,13 @@ import java.util.UUID
  * a silent alarm notifier so no real notification is raised.
  */
 @RunWith(AndroidJUnit4::class)
-class ThreatScoringInstrumentedTest {
+class ThreatScoringStorageTest {
+
+    @get:Rule
+    val androidKeyStoreRule = AndroidKeyStoreRule()
 
     private val context: Context
-        get() = InstrumentationRegistry.getInstrumentation().targetContext
+        get() = ApplicationProvider.getApplicationContext<Context>()
 
     private val dayMs = 86_400_000L
 

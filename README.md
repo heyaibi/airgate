@@ -106,11 +106,18 @@ make build
 # Build release APK and print its SHA-256
 make release
 
-# Run unit test suite
+# Run unit test suite (JVM — includes the Robolectric tests)
 make unit
+
+# Run only one JVM unit test class/pattern
+make unit-focused TESTS='*RadioStateDetector*'
 
 # Run instrumented tests on a connected device/emulator
 make android-test
+
+# Run only one instrumented test class (or Class#method) on the connected
+# device/emulator (fast iteration on one change)
+make android-test-focused CLASS=com.airgate.service.WatchdogServiceInstrumentedTest
 
 # Run Android lint
 make lint

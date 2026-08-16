@@ -17,8 +17,8 @@
 package com.airgate.data.repository
 
 import android.content.Context
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import com.airgate.domain.model.ViolationType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -26,11 +26,13 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
+import com.airgate.testutil.crypto.AndroidKeyStoreRule
+import org.junit.Rule
 
 /**
- * On-device verification that every persisted counter read-modify-write is
+ * JVM verification (Robolectric) that every persisted counter read-modify-write is
  * atomic under concurrent writers, against the real SharedPreferences backing
- * store and the real Android Keystore. The deterministic invariants (exact
+ * store and the simulated Android Keystore. The deterministic invariants (exact
  * totals, contiguous returned streak values, a single daily-point spend, an
  * unbroken alert cap) hold only when the whole read -> compute -> write runs
  * under one process-wide lock; a lost update anywhere breaks them.
@@ -39,10 +41,13 @@ import java.util.concurrent.CountDownLatch
  * touched.
  */
 @RunWith(AndroidJUnit4::class)
-class CounterConcurrencyInstrumentedTest {
+class CounterConcurrencyStorageTest {
+
+    @get:Rule
+    val androidKeyStoreRule = AndroidKeyStoreRule()
 
     private val context: Context
-        get() = InstrumentationRegistry.getInstrumentation().targetContext
+        get() = ApplicationProvider.getApplicationContext<Context>()
 
     private fun freshRepository(): SecurityStateRepository {
         val prefs = context.getSharedPreferences(

@@ -79,7 +79,12 @@ class ProtectedPrefsStoreTest {
         store = ProtectedPrefsStore(prefs, crypto)
     }
 
-    private fun storeWithFallback(): ProtectedPrefsStore = ProtectedPrefsStore(prefs)
+    // A store whose keystore-backed crypto acquisition deterministically yields
+    // nothing, standing in for "AndroidKeyStore unavailable". The default factory
+    // tries the real KeystoreManager, whose availability is environment-dependent
+    // (Robolectric tests can install a fake AndroidKeyStore provider process-wide),
+    // so the unavailable branch is pinned by injecting the failure explicitly.
+    private fun storeWithFallback(): ProtectedPrefsStore = ProtectedPrefsStore(prefs, cryptoFactory = { null })
 
     // --- protect/unprotect round-trip ---
 

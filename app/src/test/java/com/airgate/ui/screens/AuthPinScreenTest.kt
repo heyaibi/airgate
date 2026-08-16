@@ -27,9 +27,10 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import com.airgate.data.crypto.PinManager
 import com.airgate.data.repository.PinLockoutPolicy
 import com.airgate.data.repository.SecurityStateRepository
@@ -39,6 +40,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
+import com.airgate.testutil.crypto.AndroidKeyStoreRule
 
 /**
  * Rendered-behavior tests for [AuthPinScreen]. The unlock submit must agree with
@@ -52,7 +55,11 @@ import org.junit.runner.RunWith
  * waitUntil.
  */
 @RunWith(AndroidJUnit4::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class AuthPinScreenTest {
+
+    @get:Rule
+    val androidKeyStoreRule = AndroidKeyStoreRule()
 
     @get:Rule
     val composeRule = createComposeRule()
@@ -67,7 +74,7 @@ class AuthPinScreenTest {
         composeRule.onNodeWithText("Create Armed PIN").assertIsDisplayed()
         composeRule.onNode(hasText("New PIN (6+ digits)")).performTextReplacement(PIN)
         composeRule.onNode(hasText("Confirm PIN")).performTextReplacement(PIN)
-        composeRule.onNodeWithText("Set PIN & Continue").performClick()
+        composeRule.onNodeWithText("Set PIN & Continue").performScrollTo().performClick()
 
         composeRule.waitUntil(timeoutMillis = 15_000) { authenticated.value }
         assertTrue(authenticated.value)
@@ -85,9 +92,9 @@ class AuthPinScreenTest {
 
         composeRule.onNode(hasText("New PIN (6+ digits)")).performTextReplacement("12345")
         composeRule.onNode(hasText("Confirm PIN")).performTextReplacement("12345")
-        composeRule.onNodeWithText("Set PIN & Continue").performClick()
+        composeRule.onNodeWithText("Set PIN & Continue").performScrollTo().performClick()
 
-        composeRule.onNodeWithText("PIN must be at least 6 digits", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("PIN must be at least 6 digits", substring = true).performScrollTo().assertIsDisplayed()
         assertFalse(authenticated.value)
         assertFalse(repository.isPinSet())
     }
@@ -100,9 +107,9 @@ class AuthPinScreenTest {
 
         composeRule.onNode(hasText("New PIN (6+ digits)")).performTextReplacement("123456")
         composeRule.onNode(hasText("Confirm PIN")).performTextReplacement("654321")
-        composeRule.onNodeWithText("Set PIN & Continue").performClick()
+        composeRule.onNodeWithText("Set PIN & Continue").performScrollTo().performClick()
 
-        composeRule.onNodeWithText("PINs do not match", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("PINs do not match", substring = true).performScrollTo().assertIsDisplayed()
         assertFalse(authenticated.value)
         assertFalse(repository.isPinSet())
     }
@@ -115,7 +122,7 @@ class AuthPinScreenTest {
         launchScreen(repository) { authenticated.value = true }
 
         composeRule.onNode(hasSetTextAction()).performTextReplacement(PIN)
-        composeRule.onNodeWithText("Unlock").performClick()
+        composeRule.onNodeWithText("Unlock").performScrollTo().performClick()
 
         composeRule.waitUntil(timeoutMillis = 15_000) { authenticated.value }
         assertTrue(authenticated.value)
@@ -131,7 +138,7 @@ class AuthPinScreenTest {
         launchScreen(repository) { authenticated.value = true }
 
         composeRule.onNode(hasSetTextAction()).performTextReplacement("000000")
-        composeRule.onNodeWithText("Unlock").performClick()
+        composeRule.onNodeWithText("Unlock").performScrollTo().performClick()
 
         composeRule.waitUntil(timeoutMillis = 15_000) {
             composeRule.onAllNodesWithText("Incorrect PIN", substring = true)
@@ -152,7 +159,7 @@ class AuthPinScreenTest {
         launchScreen(repository) { authenticated.value = true }
 
         composeRule.onNode(hasSetTextAction()).performTextReplacement("000000")
-        composeRule.onNodeWithText("Unlock").performClick()
+        composeRule.onNodeWithText("Unlock").performScrollTo().performClick()
 
         composeRule.waitUntil(timeoutMillis = 15_000) {
             repository.getPinLockoutRemainingMs() > 0L
@@ -169,7 +176,7 @@ class AuthPinScreenTest {
         )
         assertFalse(authenticated.value)
 
-        composeRule.onNodeWithText("Too many failed attempts", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("Too many failed attempts", substring = true).performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -182,7 +189,7 @@ class AuthPinScreenTest {
         val authenticated = mutableStateOf(false)
         launchScreen(repository) { authenticated.value = true }
 
-        composeRule.onNodeWithText("Too many failed attempts", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("Too many failed attempts", substring = true).performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Locked", substring = true).assertIsNotEnabled()
         assertFalse(authenticated.value)
     }
@@ -203,7 +210,7 @@ class AuthPinScreenTest {
 
         // The store is unreadable: entry is blocked, the button offers recovery
         // rather than unlock, and no brute-force state moves.
-        composeRule.onNodeWithText("PIN data is unreadable", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("PIN data is unreadable", substring = true).performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Re-provision PIN").assertIsDisplayed()
         composeRule.onNodeWithText("Unlock").assertDoesNotExist()
         assertEquals(0, repository.getPinFailedAttempts())
@@ -225,10 +232,10 @@ class AuthPinScreenTest {
 
         // Enter recovery, then hammer the recovery actions (including invalid
         // setup submits). None of it may feed the brute-force lockout.
-        composeRule.onNodeWithText("Re-provision PIN").performClick()
-        composeRule.onNodeWithText("Set PIN & Continue").performClick()
-        composeRule.onNodeWithText("PIN must be at least 6 digits", substring = true).assertIsDisplayed()
-        composeRule.onNodeWithText("Set PIN & Continue").performClick()
+        composeRule.onNodeWithText("Re-provision PIN").performScrollTo().performClick()
+        composeRule.onNodeWithText("Set PIN & Continue").performScrollTo().performClick()
+        composeRule.onNodeWithText("PIN must be at least 6 digits", substring = true).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Set PIN & Continue").performScrollTo().performClick()
 
         assertEquals(
             "an unreadable store must never feed the brute-force lockout",
@@ -251,7 +258,7 @@ class AuthPinScreenTest {
         val authenticated = mutableStateOf(false)
         launchScreen(repository) { authenticated.value = true }
 
-        composeRule.onNodeWithText("Re-provision PIN").performClick()
+        composeRule.onNodeWithText("Re-provision PIN").performScrollTo().performClick()
 
         // Recovery mode warns the owner why a new PIN is being set, then takes
         // the normal setup flow.
@@ -259,7 +266,7 @@ class AuthPinScreenTest {
             .assertIsDisplayed()
         composeRule.onNode(hasText("New PIN (6+ digits)")).performTextReplacement(NEW_PIN)
         composeRule.onNode(hasText("Confirm PIN")).performTextReplacement(NEW_PIN)
-        composeRule.onNodeWithText("Set PIN & Continue").performClick()
+        composeRule.onNodeWithText("Set PIN & Continue").performScrollTo().performClick()
 
         composeRule.waitUntil(timeoutMillis = 15_000) { authenticated.value }
         assertTrue(authenticated.value)
@@ -290,10 +297,10 @@ class AuthPinScreenTest {
         val authenticated = mutableStateOf(false)
         launchScreen(corrupted) { authenticated.value = true }
 
-        composeRule.onNodeWithText("Re-provision PIN").performClick()
+        composeRule.onNodeWithText("Re-provision PIN").performScrollTo().performClick()
         composeRule.onNode(hasText("New PIN (6+ digits)")).performTextReplacement(NEW_PIN)
         composeRule.onNode(hasText("Confirm PIN")).performTextReplacement(NEW_PIN)
-        composeRule.onNodeWithText("Set PIN & Continue").performClick()
+        composeRule.onNodeWithText("Set PIN & Continue").performScrollTo().performClick()
 
         composeRule.waitUntil(timeoutMillis = 15_000) { authenticated.value }
         assertTrue(authenticated.value)
@@ -304,7 +311,7 @@ class AuthPinScreenTest {
     }
 
     private fun freshPrefs(): SharedPreferences {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val context = ApplicationProvider.getApplicationContext<Context>()
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().clear().commit()
         return prefs

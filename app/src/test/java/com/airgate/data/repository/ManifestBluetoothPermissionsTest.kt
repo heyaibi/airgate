@@ -19,8 +19,8 @@ package com.airgate.data.repository
 import android.content.Context
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -32,10 +32,10 @@ import org.junit.runner.RunWith
  * permission gate agrees with the platform's own check on this device.
  */
 @RunWith(AndroidJUnit4::class)
-class ManifestBluetoothPermissionsInstrumentedTest {
+class ManifestBluetoothPermissionsTest {
 
     private val context: Context
-        get() = InstrumentationRegistry.getInstrumentation().targetContext
+        get() = ApplicationProvider.getApplicationContext<Context>()
 
     @Test
     fun bluetoothConnect_isDeclaredInTheManifest() {

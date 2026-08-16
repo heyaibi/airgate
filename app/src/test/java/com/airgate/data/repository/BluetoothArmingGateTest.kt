@@ -17,38 +17,43 @@
 package com.airgate.data.repository
 
 import android.Manifest
+import android.app.Application
 import android.content.Context
 import android.content.pm.PackageManager
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import com.airgate.domain.model.AppConfig
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.FileInputStream
+import org.robolectric.Shadows.shadowOf
+import com.airgate.testutil.crypto.AndroidKeyStoreRule
+import org.junit.Rule
 
 /**
- * On-device verification of the Bluetooth arming gate: the watchdog can only be
- * *newly* enabled while the app can read Bluetooth state (BLUETOOTH_CONNECT on
- * Android 12+). Uses a throwaway prefs file so no real app state is touched.
+ * JVM verification (Robolectric) of the Bluetooth arming gate: the watchdog can
+ * only be *newly* enabled while the app can read Bluetooth state
+ * (BLUETOOTH_CONNECT on Android 12+). Uses a throwaway prefs file so no real app
+ * state is touched.
  *
- * The granted branch is exercised against the real permission via `pm grant` (which
- * does not disturb a running process). The denied branch is exercised by injecting
- * the same decision a revoked permission produces, because revoking a runtime
- * permission mid-instrumentation force-stops the app process that is running the
- * test; the decision logic is covered exhaustively in the JVM suite.
+ * The granted branch is exercised against the simulated permission state (the
+ * same set [android.content.Context.checkSelfPermission] consults). The denied
+ * branch is exercised by injecting the same decision a revoked permission
+ * produces; the decision logic is covered exhaustively in the JVM suite.
  */
 @RunWith(AndroidJUnit4::class)
-class BluetoothArmingGateInstrumentedTest {
+class BluetoothArmingGateTest {
+
+    @get:Rule
+    val androidKeyStoreRule = AndroidKeyStoreRule()
 
     private val context: Context
-        get() = InstrumentationRegistry.getInstrumentation().targetContext
+        get() = ApplicationProvider.getApplicationContext<Context>()
 
     @Test
     fun arming_isAccepted_whenBluetoothConnectIsGranted() {
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) return
-        setBluetoothConnectPermission(granted = true)
+        grantBluetoothConnect()
         val repository = repository(provider = {
             context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) ==
                 PackageManager.PERMISSION_GRANTED
@@ -99,16 +104,8 @@ class BluetoothArmingGateInstrumentedTest {
         return repository
     }
 
-    private fun setBluetoothConnectPermission(granted: Boolean) {
-        val pkg = context.packageName
-        val permission = "android.permission.BLUETOOTH_CONNECT"
-        val command = if (granted) "pm grant $pkg $permission" else "pm revoke $pkg $permission"
-        val pfd = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
-        try {
-            FileInputStream(pfd.fileDescriptor).use { it.readBytes() }
-        } finally {
-            pfd.close()
-        }
-        Thread.sleep(500)
+    private fun grantBluetoothConnect() {
+        shadowOf(ApplicationProvider.getApplicationContext<Application>())
+            .grantPermissions(Manifest.permission.BLUETOOTH_CONNECT)
     }
 }

@@ -30,6 +30,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
 
 /**
  * Rendered-behavior tests for the hardening & wipe card: the removed
@@ -38,7 +39,8 @@ import org.junit.runner.RunWith
  * render and still fire config changes.
  */
 @RunWith(AndroidJUnit4::class)
-class HardeningWipeScopeCardInstrumentedTest {
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+class HardeningWipeScopeCardTest {
 
     @get:Rule
     val composeRule = createComposeRule()
