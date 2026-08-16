@@ -74,12 +74,11 @@ class WatchdogService : Service(), SignalListener {
     private var auditHandler: Handler? = null
     private val auditRunnable = object : Runnable {
         override fun run() {
-            try {
-                systemSettingsDetector.checkSettingsState()
-                postureAudit.checkTamperOnly()
-            } catch (e: Exception) {
-                // Ignore audit errors
-            }
+            AuditLoop.tick(
+                checkWifiRadioState = { networkDetector.checkWifiRadioState() },
+                checkSettingsState = { systemSettingsDetector.checkSettingsState() },
+                checkTamperOnly = { postureAudit.checkTamperOnly() }
+            )
             auditHandler?.postDelayed(this, POLL_INTERVAL_MS)
         }
     }

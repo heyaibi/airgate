@@ -62,7 +62,7 @@ Every monitored condition, its trigger, response tier, whether it shows the full
 
 | Violation | Trigger | Tier | Alarm | Point | Notes |
 |---|---|---|---|---|---|
-| Wi-Fi transceiver enabled | The Wi-Fi transceiver is on, with or without validated internet | LOG_ONLY | ✗ | ✗ | Audit-log only |
+| Wi-Fi transceiver enabled | The Wi-Fi transceiver is on — even with no network connected, with or without validated internet | LOG_ONLY | ✗ | ✗ | Audit-log only |
 | Validated network | Any validated internet is present — Wi-Fi, cellular, ethernet or Bluetooth PAN | ALARM_STREAK | ✓ | ✓ | |
 | Airplane mode off | Airplane mode is switched off | ALARM_STREAK | ✓ | ✓ | |
 | Bluetooth activity | Bluetooth is turned on | ALARM_STREAK | ✓ | ✓ | Passive proximity events (device found / bond changed) are logged only |

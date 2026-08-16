@@ -16,10 +16,13 @@
 
 package com.airgate.detector
 
+import android.net.wifi.WifiManager
 import com.airgate.domain.model.BreachEvent
 import com.airgate.domain.model.ResponseTier
+import com.airgate.domain.model.ScoringGroup
 import com.airgate.domain.model.ViolationType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -376,6 +379,257 @@ class NetworkDetectorTest {
         )
     }
 
+    // --- Wi-Fi radio-state episode latch (the unconnected-radio backstop) ---
+
+    @Test
+    fun `an already-on radio at the first poll is reported`() {
+        // The core gap this closes: the network callback never fires for a radio
+        // that is on but unconnected. The first observation (previous == false)
+        // must detect an already-live radio as the violation it is.
+        val result = NetworkDetector.resolveRadioStatePoll(
+            previousReported = false,
+            wifiState = WifiManager.WIFI_STATE_ENABLED
+        )
+
+        assertTrue("an already-on radio must be reported", result.shouldEmit)
+        assertTrue("reporting the episode must latch it", result.nextReported)
+    }
+
+    @Test
+    fun `radio enabled after a previous disabled observation is reported`() {
+        val result = NetworkDetector.resolveRadioStatePoll(
+            previousReported = false,
+            wifiState = WifiManager.WIFI_STATE_ENABLED
+        )
+
+        assertTrue(result.shouldEmit)
+        assertTrue(result.nextReported)
+    }
+
+    @Test
+    fun `radio staying enabled is never re-reported on a later poll`() {
+        val sustained = NetworkDetector.resolveRadioStatePoll(
+            previousReported = true,
+            wifiState = WifiManager.WIFI_STATE_ENABLED
+        )
+
+        assertFalse("a sustained radio-on state must not re-report", sustained.shouldEmit)
+        assertTrue("the episode stays latched", sustained.nextReported)
+    }
+
+    @Test
+    fun `radio turning off then back on is reported again`() {
+        var latch = false
+        var result = NetworkDetector.resolveRadioStatePoll(latch, WifiManager.WIFI_STATE_ENABLED)
+        assertTrue(result.shouldEmit)
+        latch = result.nextReported
+
+        result = NetworkDetector.resolveRadioStatePoll(latch, WifiManager.WIFI_STATE_DISABLED)
+        assertFalse(result.shouldEmit)
+        latch = result.nextReported
+        assertFalse("a definitive off must clear the episode", latch)
+
+        result = NetworkDetector.resolveRadioStatePoll(latch, WifiManager.WIFI_STATE_ENABLED)
+        assertTrue("a fresh disabled→enabled transition must report again", result.shouldEmit)
+    }
+
+    @Test
+    fun `a transient unknown read never forgets an on radio`() {
+        // A failed/unknown read is not evidence the radio turned off: the episode
+        // must stay latched so the next ENABLED read (same physical episode) is
+        // not reported twice.
+        val unknown = NetworkDetector.resolveRadioStatePoll(
+            previousReported = true,
+            wifiState = WifiManager.WIFI_STATE_UNKNOWN
+        )
+        assertFalse(unknown.shouldEmit)
+        assertTrue("an unknown read must not clear a latched episode", unknown.nextReported)
+
+        val afterRecovery = NetworkDetector.resolveRadioStatePoll(
+            previousReported = unknown.nextReported,
+            wifiState = WifiManager.WIFI_STATE_ENABLED
+        )
+        assertFalse("recovery to the same episode must not re-report", afterRecovery.shouldEmit)
+    }
+
+    @Test
+    fun `a transient unknown read after off still recovers and reports the next on`() {
+        val unknown = NetworkDetector.resolveRadioStatePoll(
+            previousReported = false,
+            wifiState = WifiManager.WIFI_STATE_UNKNOWN
+        )
+        assertFalse(unknown.shouldEmit)
+        assertFalse(unknown.nextReported)
+
+        val recovered = NetworkDetector.resolveRadioStatePoll(
+            previousReported = unknown.nextReported,
+            wifiState = WifiManager.WIFI_STATE_ENABLED
+        )
+        assertTrue("a fresh on after an unknown read must report", recovered.shouldEmit)
+    }
+
+    @Test
+    fun `radio disabled or transitioning never reports regardless of previous state`() {
+        for (previous in BOOLS) {
+            for (state in NON_ENABLED_STATES) {
+                val result = NetworkDetector.resolveRadioStatePoll(previous, state)
+                assertFalse(
+                    "state $state with previous=$previous must never report",
+                    result.shouldEmit
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `only definitive states move the latch`() {
+        // DISABLED clears; the transitional/unknown states keep the previous value.
+        assertEquals(false, NetworkDetector.resolveRadioStatePoll(true, WifiManager.WIFI_STATE_DISABLED).nextReported)
+        assertEquals(false, NetworkDetector.resolveRadioStatePoll(false, WifiManager.WIFI_STATE_DISABLED).nextReported)
+        assertEquals(true, NetworkDetector.resolveRadioStatePoll(true, WifiManager.WIFI_STATE_DISABLING).nextReported)
+        assertEquals(false, NetworkDetector.resolveRadioStatePoll(false, WifiManager.WIFI_STATE_DISABLING).nextReported)
+        assertEquals(true, NetworkDetector.resolveRadioStatePoll(true, WifiManager.WIFI_STATE_ENABLING).nextReported)
+        assertEquals(false, NetworkDetector.resolveRadioStatePoll(false, WifiManager.WIFI_STATE_ENABLING).nextReported)
+        assertEquals(true, NetworkDetector.resolveRadioStatePoll(true, WifiManager.WIFI_STATE_UNKNOWN).nextReported)
+        assertEquals(false, NetworkDetector.resolveRadioStatePoll(false, WifiManager.WIFI_STATE_UNKNOWN).nextReported)
+    }
+
+    // --- Wi-Fi radio-state callback path (connected-network transceiver) ---
+
+    @Test
+    fun `wifi transport present with nothing reported is reported`() {
+        val result = NetworkDetector.resolveRadioStateCallback(
+            previousReported = false,
+            wifiTransportPresent = true
+        )
+
+        assertTrue(result.shouldEmit)
+        assertTrue(result.nextReported)
+    }
+
+    @Test
+    fun `wifi transport present when already reported is not re-reported`() {
+        val result = NetworkDetector.resolveRadioStateCallback(
+            previousReported = true,
+            wifiTransportPresent = true
+        )
+
+        assertFalse("a connected network must not re-report an open episode", result.shouldEmit)
+        assertTrue(result.nextReported)
+    }
+
+    @Test
+    fun `no wifi transport never reports and never clears the episode`() {
+        val fresh = NetworkDetector.resolveRadioStateCallback(false, wifiTransportPresent = false)
+        assertFalse(fresh.shouldEmit)
+        assertFalse(fresh.nextReported)
+
+        val latched = NetworkDetector.resolveRadioStateCallback(true, wifiTransportPresent = false)
+        assertFalse(latched.shouldEmit)
+        assertTrue("a transport-absent snapshot is not evidence the radio is off", latched.nextReported)
+    }
+
+    // --- Cross-mechanism coordination (one report per radio-on episode) ---
+
+    @Test
+    fun `a radio-on episode is reported exactly once across poll then callback`() {
+        var latch = false
+
+        // Poll observes the radio switch turning on first.
+        var result = NetworkDetector.resolveRadioStatePoll(latch, WifiManager.WIFI_STATE_ENABLED)
+        assertTrue("the poll must report the episode", result.shouldEmit)
+        latch = result.nextReported
+
+        // The network connects; the callback observes Wi-Fi transport for the same
+        // episode and must not duplicate the report.
+        result = NetworkDetector.resolveRadioStateCallback(latch, wifiTransportPresent = true)
+        assertFalse("the callback must not duplicate the poll's report", result.shouldEmit)
+        latch = result.nextReported
+
+        // Later polls on the same episode stay silent too.
+        result = NetworkDetector.resolveRadioStatePoll(latch, WifiManager.WIFI_STATE_ENABLED)
+        assertFalse(result.shouldEmit)
+        latch = result.nextReported
+
+        // The radio turns off (definitive) and back on: a new episode.
+        result = NetworkDetector.resolveRadioStatePoll(latch, WifiManager.WIFI_STATE_DISABLED)
+        latch = result.nextReported
+        result = NetworkDetector.resolveRadioStateCallback(latch, wifiTransportPresent = true)
+        assertTrue("a fresh episode after off must be reported once", result.shouldEmit)
+    }
+
+    @Test
+    fun `a radio-on episode is reported exactly once across callback then poll`() {
+        var latch = false
+
+        // The device is already connected when the service starts: the callback
+        // observes Wi-Fi transport first.
+        var result = NetworkDetector.resolveRadioStateCallback(latch, wifiTransportPresent = true)
+        assertTrue("the callback must report the episode", result.shouldEmit)
+        latch = result.nextReported
+
+        // The first poll then sees the radio switch on for the same episode.
+        result = NetworkDetector.resolveRadioStatePoll(latch, WifiManager.WIFI_STATE_ENABLED)
+        assertFalse("the poll must not duplicate the callback's report", result.shouldEmit)
+        latch = result.nextReported
+
+        // Repeated transport snapshots stay silent.
+        result = NetworkDetector.resolveRadioStateCallback(latch, wifiTransportPresent = true)
+        assertFalse(result.shouldEmit)
+        latch = result.nextReported
+    }
+
+    // --- Poll breach construction ---
+
+    @Test
+    fun `poll breach is log-only in the wireless group with the WIFI_POLL source`() {
+        val breach = NetworkDetector.radioPollBreach(WifiManager.WIFI_STATE_ENABLED)
+
+        assertEquals(ViolationType.WIFI_TRANSCEIVER_ENABLED, breach.violationType)
+        assertEquals(ResponseTier.LOG_ONLY, breach.tier)
+        assertEquals(ScoringGroup.WIRELESS, breach.violationType.scoringGroup)
+        assertEquals(1, breach.weight)
+        assertEquals("WIFI_POLL", breach.rawMetadata["source"])
+        assertEquals(
+            WifiManager.WIFI_STATE_ENABLED.toString(),
+            breach.rawMetadata["state"]
+        )
+    }
+
+    @Test
+    fun `poll breach carries a unique id and a timestamp`() {
+        val first = NetworkDetector.radioPollBreach(WifiManager.WIFI_STATE_ENABLED)
+        val second = NetworkDetector.radioPollBreach(WifiManager.WIFI_STATE_ENABLED)
+
+        assertTrue("each poll breach must carry a unique id", first.id != second.id)
+        assertTrue("each poll breach must carry a timestamp", first.timestamp > 0L)
+    }
+
+    @Test
+    fun `exhaustive radio-state poll table - every state and previous combination`() {
+        for (previous in BOOLS) {
+            for (state in ALL_POLL_STATES) {
+                val result = NetworkDetector.resolveRadioStatePoll(previous, state)
+                val message = "state=$state previous=$previous"
+
+                assertEquals(
+                    message,
+                    state == WifiManager.WIFI_STATE_ENABLED && !previous,
+                    result.shouldEmit
+                )
+                assertEquals(
+                    message,
+                    when (state) {
+                        WifiManager.WIFI_STATE_ENABLED -> true
+                        WifiManager.WIFI_STATE_DISABLED -> false
+                        else -> previous
+                    },
+                    result.nextReported
+                )
+            }
+        }
+    }
+
     // --- Exhaustive truth table over all 64 combinations ---
 
     @Test
@@ -486,5 +740,21 @@ class NetworkDetectorTest {
 
     private companion object {
         val BOOLS: List<Boolean> = listOf(false, true)
+
+        /** Every state that must never be treated as a live radio. */
+        val NON_ENABLED_STATES: List<Int> = listOf(
+            WifiManager.WIFI_STATE_DISABLING,
+            WifiManager.WIFI_STATE_DISABLED,
+            WifiManager.WIFI_STATE_ENABLING,
+            WifiManager.WIFI_STATE_UNKNOWN
+        )
+
+        /** Every real state plus malformed values the framework can never return. */
+        val ALL_POLL_STATES: List<Int> = NON_ENABLED_STATES + listOf(
+            WifiManager.WIFI_STATE_ENABLED,
+            99,
+            -1,
+            Int.MAX_VALUE
+        )
     }
 }

@@ -21,6 +21,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.wifi.WifiManager
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -28,6 +29,7 @@ import com.airgate.domain.model.BreachEvent
 import com.airgate.domain.model.ResponseTier
 import com.airgate.domain.model.ViolationType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -161,6 +163,91 @@ class NetworkDetectorInstrumentedTest {
     @Test
     fun realCaps_empty_firesNothing() {
         assertTrue(NetworkDetector.resolveBreaches(NetworkCapabilities()).isEmpty())
+    }
+
+    // --- Wi-Fi radio-state episode latch against the real framework state ---
+
+    @Test
+    fun radioStatePoll_seamReportsOnlyEnabled_withRealConstants() {
+        val enabled = NetworkDetector.resolveRadioStatePoll(
+            previousReported = false,
+            wifiState = WifiManager.WIFI_STATE_ENABLED
+        )
+        assertTrue("an enabled radio must be reported", enabled.shouldEmit)
+        assertTrue(enabled.nextReported)
+
+        for (state in listOf(
+            WifiManager.WIFI_STATE_DISABLING,
+            WifiManager.WIFI_STATE_DISABLED,
+            WifiManager.WIFI_STATE_ENABLING,
+            WifiManager.WIFI_STATE_UNKNOWN
+        )) {
+            val result = NetworkDetector.resolveRadioStatePoll(false, state)
+            assertFalse("state $state must never report", result.shouldEmit)
+        }
+    }
+
+    @Test
+    fun radioStatePoll_seamRecoversFromTransientUnknown_withRealConstants() {
+        val unknownWhileLatched = NetworkDetector.resolveRadioStatePoll(
+            previousReported = true,
+            wifiState = WifiManager.WIFI_STATE_UNKNOWN
+        )
+        assertFalse(unknownWhileLatched.shouldEmit)
+        assertTrue("an unknown read must not clear a latched episode", unknownWhileLatched.nextReported)
+
+        val afterRecovery = NetworkDetector.resolveRadioStatePoll(
+            unknownWhileLatched.nextReported,
+            WifiManager.WIFI_STATE_ENABLED
+        )
+        assertFalse("recovery to the same episode must not re-report", afterRecovery.shouldEmit)
+    }
+
+    @Test
+    fun radioPollBreach_matchesTheRealConstants() {
+        val breach = NetworkDetector.radioPollBreach(WifiManager.WIFI_STATE_ENABLED)
+
+        assertEquals(ViolationType.WIFI_TRANSCEIVER_ENABLED, breach.violationType)
+        assertEquals(ResponseTier.LOG_ONLY, breach.tier)
+        assertEquals("WIFI_POLL", breach.rawMetadata["source"])
+        assertEquals(
+            WifiManager.WIFI_STATE_ENABLED.toString(),
+            breach.rawMetadata["state"]
+        )
+    }
+
+    @Test
+    fun checkWifiRadioState_readsTheRealWifiManagerRadioState() {
+        val listener = RecordingListener()
+        val detector = NetworkDetector(context, listener)
+        detector.checkWifiRadioState()
+
+        // The detector read the same WifiManager we read for the expectation; the
+        // assertions below hold for whatever state the device is in right now.
+        val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        val realState = wifiManager.wifiState
+        val realEnabled = realState == WifiManager.WIFI_STATE_ENABLED
+
+        if (realEnabled) {
+            assertEquals(
+                "an enabled radio must be detected by the poll",
+                listOf(ViolationType.WIFI_TRANSCEIVER_ENABLED),
+                listener.breaches.map { it.violationType }
+            )
+            assertEquals("WIFI_POLL", listener.breaches.single().rawMetadata["source"])
+            assertEquals(realState.toString(), listener.breaches.single().rawMetadata["state"])
+        } else {
+            assertTrue("a non-enabled radio must not fire", listener.breaches.isEmpty())
+        }
+
+        // Episode latch: a second poll with the radio unchanged must not re-fire
+        // the breach while the state is held constant.
+        detector.checkWifiRadioState()
+        assertEquals(
+            "an unchanged radio must not re-fire on a second poll",
+            if (realEnabled) 1 else 0,
+            listener.breaches.size
+        )
     }
 
     // --- Registration lifecycle against the real ConnectivityManager ---

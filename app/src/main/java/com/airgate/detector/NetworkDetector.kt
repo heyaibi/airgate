@@ -21,6 +21,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.wifi.WifiManager
 import com.airgate.domain.model.BreachEvent
 import com.airgate.domain.model.ViolationType
 import java.util.UUID
@@ -38,7 +39,23 @@ class NetworkDetector(
             networkCapabilities: NetworkCapabilities
         ) {
             super.onCapabilitiesChanged(network, networkCapabilities)
-            resolveBreaches(networkCapabilities).forEach(listener::onBreachDetected)
+            val breaches = resolveBreaches(networkCapabilities)
+            val hasWifiTransport =
+                networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+            var transceiverToEmit: BreachEvent? = null
+            synchronized(radioLatchLock) {
+                val result = resolveRadioStateCallback(wifiRadioReported, hasWifiTransport)
+                wifiRadioReported = result.nextReported
+                if (result.shouldEmit) {
+                    transceiverToEmit = breaches.firstOrNull {
+                        it.violationType == ViolationType.WIFI_TRANSCEIVER_ENABLED
+                    }
+                }
+            }
+            breaches.asSequence()
+                .filter { it.violationType != ViolationType.WIFI_TRANSCEIVER_ENABLED }
+                .forEach(listener::onBreachDetected)
+            transceiverToEmit?.let(listener::onBreachDetected)
         }
 
         override fun onLost(network: Network) {
@@ -49,6 +66,17 @@ class NetworkDetector(
             super.onLost(network)
         }
     }
+
+    // Shared "radio-on episode" latch: WIFI_TRANSCEIVER_ENABLED is reported at most
+    // once per radio-on episode, whichever mechanism observes it first. Both the
+    // network callback (Wi-Fi transport present on a connected network) and the
+    // periodic poll (the radio switch itself) set it, and only the poll's
+    // definitive DISABLED observation resets it — so a radio that stays on while
+    // connected then drops back to unconnected is one episode, and a transient
+    // failed read never forgets an on radio. Guarded because the callback runs on
+    // the main thread while the poll runs on the audit thread.
+    private val radioLatchLock = Any()
+    private var wifiRadioReported = false
 
     fun startMonitoring() {
         val request = NetworkRequest.Builder()
@@ -69,7 +97,112 @@ class NetworkDetector(
         }
     }
 
+    /**
+     * Periodic poll of the Wi-Fi radio state. The network callback above only
+     * fires for connected networks, so a radio that is on but unassociated
+     * (scanning, never connected) produces zero callbacks and would otherwise be
+     * invisible. Reading [WifiManager.getWifiState] sees the radio switch itself,
+     * so every on state is detected regardless of whether any network exists.
+     * Runs on the audit loop's background thread.
+     */
+    fun checkWifiRadioState() {
+        val wifiState = readWifiState()
+        var emit = false
+        synchronized(radioLatchLock) {
+            val result = resolveRadioStatePoll(wifiRadioReported, wifiState)
+            wifiRadioReported = result.nextReported
+            emit = result.shouldEmit
+        }
+        if (emit) {
+            listener.onBreachDetected(radioPollBreach(wifiState))
+        }
+    }
+
+    private fun readWifiState(): Int {
+        return try {
+            val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            wifiManager.wifiState
+        } catch (e: Exception) {
+            // A failed read is treated as UNKNOWN: no breach fires for it, the
+            // reported-episode state is left untouched, and the next poll
+            // re-attempts the read instead of staying poisoned.
+            WifiManager.WIFI_STATE_UNKNOWN
+        }
+    }
+
     companion object {
+
+        /**
+         * Outcome of one radio-state observation for either mechanism: whether a
+         * WIFI_TRANSCEIVER_ENABLED breach must be emitted now, and the reported
+         * value the caller must remember for the shared episode latch.
+         */
+        internal data class RadioStateResult(
+            val shouldEmit: Boolean,
+            val nextReported: Boolean
+        )
+
+        /**
+         * Pure decision logic for the periodic poll, keyed on the radio switch
+         * state alone. A breach fires only when the radio is fully enabled and the
+         * episode has not yet been reported, so a sustained radio-on state never
+         * re-fires on every tick. Only definitive states move the latch: ENABLED
+         * reports, DISABLED clears, and the transitional or unknown states
+         * (ENABLING / DISABLING / UNKNOWN — including a failed read) leave it
+         * untouched, so a transient read failure can never forget an on radio.
+         * The first observation (previous == false) treats an already-enabled
+         * radio as a violation: the radio being live is the air-gap breach
+         * whether or not it is connected to anything. Free of Android framework
+         * calls so every branch is unit-testable.
+         */
+        internal fun resolveRadioStatePoll(
+            previousReported: Boolean,
+            wifiState: Int
+        ): RadioStateResult {
+            val shouldEmit = wifiState == WifiManager.WIFI_STATE_ENABLED && !previousReported
+            val nextReported = when (wifiState) {
+                WifiManager.WIFI_STATE_ENABLED -> true
+                WifiManager.WIFI_STATE_DISABLED -> false
+                else -> previousReported
+            }
+            return RadioStateResult(
+                shouldEmit = shouldEmit,
+                nextReported = nextReported
+            )
+        }
+
+        /**
+         * Pure decision logic for the network-callback path, keyed on Wi-Fi
+         * transport presence. Emits only when a Wi-Fi transport is present and the
+         * episode has not already been reported (by this callback or by the poll),
+         * which keeps the two mechanisms from recording the same radio-on episode
+         * twice. Absence of a transport never clears the latch — only the poll's
+         * definitive DISABLED observation ends an episode. Free of Android
+         * framework calls so every branch is unit-testable.
+         */
+        internal fun resolveRadioStateCallback(
+            previousReported: Boolean,
+            wifiTransportPresent: Boolean
+        ): RadioStateResult {
+            return RadioStateResult(
+                shouldEmit = wifiTransportPresent && !previousReported,
+                nextReported = if (wifiTransportPresent) true else previousReported
+            )
+        }
+
+        /**
+         * Builds the poll-sourced WIFI_TRANSCEIVER_ENABLED breach so the metadata
+         * is testable on the JVM. Distinct from the callback-sourced breach (which
+         * rides the existing [resolveBreaches] path) via the WIFI_POLL source.
+         */
+        internal fun radioPollBreach(wifiState: Int): BreachEvent = breachOf(
+            ViolationType.WIFI_TRANSCEIVER_ENABLED,
+            rawMetadata = mapOf(
+                "source" to "WIFI_POLL",
+                "state" to wifiState.toString()
+            )
+        )
+
         /**
          * Framework-coupled entry point: extracts the capability/transport state
          * from a [NetworkCapabilities] snapshot and resolves the breaches to raise.

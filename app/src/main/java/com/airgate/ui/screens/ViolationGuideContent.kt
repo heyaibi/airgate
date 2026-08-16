@@ -71,7 +71,7 @@ import com.airgate.ui.components.ViolationGuideLegendCard
 private val guideItems: List<ViolationGuideInfo> = listOf(
     ViolationGuideInfo(
         violationType = ViolationType.WIFI_TRANSCEIVER_ENABLED,
-        trigger = "the Wi-Fi transceiver is on, with or without validated internet",
+        trigger = "The Wi-Fi transceiver is on \u2014 even with no network connected, with or without validated internet",
         alarmScreen = false,
         addsPoint = false,
         note = "Log entry only, for auditing. No alarm screen and no point."
