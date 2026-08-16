@@ -92,6 +92,7 @@ fun DashboardScreen(
     var showClearStreakPinDialog by remember { mutableStateOf(false) }
     val pinUsable by remember { mutableStateOf(repository.isPinUsable()) }
     var notificationsGranted by remember { mutableStateOf(repository.areNotificationsAllowed()) }
+    var bluetoothConnectGranted by remember { mutableStateOf(repository.isBluetoothConnectAllowed()) }
 
     // Persistent in-app alarm: raised whenever the engine escalates, it survives
     // even when the real-time surfaces were silent (notifications denied / activity
@@ -126,6 +127,7 @@ fun DashboardScreen(
                 streak = repository.getStreak()
                 securityState = repository.getSecurityState()
                 notificationsGranted = repository.areNotificationsAllowed()
+                bluetoothConnectGranted = repository.isBluetoothConnectAllowed()
                 pendingAlarm = repository.getPendingAlarm()
                 shieldScope.launch {
                     shieldStatuses = withContext(Dispatchers.Default) { shieldChecker.check() }
@@ -200,10 +202,11 @@ fun DashboardScreen(
                 context = context,
                 pinUsable = pinUsable,
                 notificationsGranted = notificationsGranted,
+                bluetoothConnectGranted = bluetoothConnectGranted,
                 onEnableBlocked = {
                     coroutineScope.launch {
                         snackbarHostState.showSnackbar(
-                            message = "Protection requires a usable Armed PIN and notifications enabled.",
+                            message = "Protection requires a usable Armed PIN, notifications, and Bluetooth detection enabled.",
                             duration = SnackbarDuration.Short
                         )
                     }

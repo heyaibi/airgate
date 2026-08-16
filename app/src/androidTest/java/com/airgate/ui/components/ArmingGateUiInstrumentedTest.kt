@@ -33,9 +33,10 @@ import org.junit.runner.RunWith
 /**
  * Rendered-behavior tests for the arming gates in the UI: the protection switch
  * (dashboard) and the watchdog / paranoid-preset toggles (settings) must refuse to
- * arm without a usable Armed PIN or without notifications being allowed, and must
- * arm normally when both preconditions hold. The central repository gate (the
- * actual security boundary) is covered separately.
+ * arm without a usable Armed PIN, without notifications being allowed, or without
+ * Bluetooth detection being allowed, and must arm normally when all preconditions
+ * hold. The central repository gate (the actual security boundary) is covered
+ * separately.
  */
 @RunWith(AndroidJUnit4::class)
 class ArmingGateUiInstrumentedTest {
@@ -57,6 +58,7 @@ class ArmingGateUiInstrumentedTest {
                 context = context,
                 pinUsable = true,
                 notificationsGranted = false,
+                bluetoothConnectGranted = true,
                 onEnableBlocked = { enableBlocked = true },
                 onConfigChange = { configChanged = true }
             )
@@ -66,6 +68,30 @@ class ArmingGateUiInstrumentedTest {
         composeRule.waitForIdle()
 
         assertTrue("arming must be refused without notifications", enableBlocked)
+        assertFalse("no config change may be committed when arming is refused", configChanged)
+    }
+
+    @Test
+    fun dashboardSwitch_refusesToArm_whenBluetoothConnectIsNotGranted() {
+        var configChanged = false
+        var enableBlocked = false
+
+        composeRule.setContent {
+            MasterActivationCard(
+                config = AppConfig(),
+                context = context,
+                pinUsable = true,
+                notificationsGranted = true,
+                bluetoothConnectGranted = false,
+                onEnableBlocked = { enableBlocked = true },
+                onConfigChange = { configChanged = true }
+            )
+        }
+
+        composeRule.onNodeWithTag("master_activation_switch").performClick()
+        composeRule.waitForIdle()
+
+        assertTrue("arming must be refused without bluetooth detection", enableBlocked)
         assertFalse("no config change may be committed when arming is refused", configChanged)
     }
 
@@ -80,6 +106,7 @@ class ArmingGateUiInstrumentedTest {
                 context = context,
                 pinUsable = false,
                 notificationsGranted = true,
+                bluetoothConnectGranted = true,
                 onEnableBlocked = { enableBlocked = true },
                 onConfigChange = { configChanged = true }
             )
@@ -93,7 +120,7 @@ class ArmingGateUiInstrumentedTest {
     }
 
     @Test
-    fun dashboardSwitch_arms_whenPinIsUsableAndNotificationsAreGranted() {
+    fun dashboardSwitch_arms_whenAllPreconditionsHold() {
         var configChanged: AppConfig? = null
         var enableBlocked = false
 
@@ -103,6 +130,7 @@ class ArmingGateUiInstrumentedTest {
                 context = context,
                 pinUsable = true,
                 notificationsGranted = true,
+                bluetoothConnectGranted = true,
                 onEnableBlocked = { enableBlocked = true },
                 onConfigChange = { configChanged = it }
             )
@@ -111,19 +139,22 @@ class ArmingGateUiInstrumentedTest {
         composeRule.onNodeWithTag("master_activation_switch").performClick()
         composeRule.waitForIdle()
 
-        assertTrue("arming must proceed when both preconditions hold", configChanged?.isEnabled == true)
+        assertTrue("arming must proceed when all preconditions hold", configChanged?.isEnabled == true)
         assertFalse(enableBlocked)
     }
 
-    @Test
-    fun settingsEnableWatchdog_refusesToArm_whenNotificationsAreNotGranted() {
-        var configChanged = false
-        var notificationsBlocked = false
-
+    private fun masterControlsCard(
+        pinUsable: Boolean,
+        notificationsGranted: Boolean,
+        bluetoothConnectGranted: Boolean,
+        onConfigChange: (AppConfig) -> Unit,
+        onNotificationsBlocked: () -> Unit = {},
+        onBluetoothBlocked: () -> Unit = {}
+    ) {
         composeRule.setContent {
             MasterControlsCard(
                 config = AppConfig(),
-                onConfigChange = { configChanged = true },
+                onConfigChange = onConfigChange,
                 onConfigFlush = {},
                 context = context,
                 blockEnforcer = DevicePolicyEnforcer(context, DhizukuManager(context)),
@@ -131,12 +162,28 @@ class ArmingGateUiInstrumentedTest {
                 blockStatus = "",
                 blockIsError = false,
                 onBlockStatusChange = { _, _ -> },
-                pinUsable = true,
-                notificationsGranted = false,
+                pinUsable = pinUsable,
+                notificationsGranted = notificationsGranted,
+                bluetoothConnectGranted = bluetoothConnectGranted,
                 onEnableBlocked = {},
-                onNotificationsBlocked = { notificationsBlocked = true }
+                onNotificationsBlocked = onNotificationsBlocked,
+                onBluetoothBlocked = onBluetoothBlocked
             )
         }
+    }
+
+    @Test
+    fun settingsEnableWatchdog_refusesToArm_whenNotificationsAreNotGranted() {
+        var configChanged = false
+        var notificationsBlocked = false
+
+        masterControlsCard(
+            pinUsable = true,
+            notificationsGranted = false,
+            bluetoothConnectGranted = true,
+            onConfigChange = { configChanged = true },
+            onNotificationsBlocked = { notificationsBlocked = true }
+        )
 
         composeRule.onNodeWithTag("enable_watchdog_switch").performClick()
         composeRule.waitForIdle()
@@ -146,27 +193,37 @@ class ArmingGateUiInstrumentedTest {
     }
 
     @Test
+    fun settingsEnableWatchdog_refusesToArm_whenBluetoothConnectIsNotGranted() {
+        var configChanged = false
+        var bluetoothBlocked = false
+
+        masterControlsCard(
+            pinUsable = true,
+            notificationsGranted = true,
+            bluetoothConnectGranted = false,
+            onConfigChange = { configChanged = true },
+            onBluetoothBlocked = { bluetoothBlocked = true }
+        )
+
+        composeRule.onNodeWithTag("enable_watchdog_switch").performClick()
+        composeRule.waitForIdle()
+
+        assertTrue("arming must be refused without bluetooth detection", bluetoothBlocked)
+        assertFalse("no config change may be committed when arming is refused", configChanged)
+    }
+
+    @Test
     fun settingsParanoidPreset_refusesToArm_whenNotificationsAreNotGranted() {
         var configChanged = false
         var notificationsBlocked = false
 
-        composeRule.setContent {
-            MasterControlsCard(
-                config = AppConfig(),
-                onConfigChange = { configChanged = true },
-                onConfigFlush = {},
-                context = context,
-                blockEnforcer = DevicePolicyEnforcer(context, DhizukuManager(context)),
-                dhizukuGranted = false,
-                blockStatus = "",
-                blockIsError = false,
-                onBlockStatusChange = { _, _ -> },
-                pinUsable = true,
-                notificationsGranted = false,
-                onEnableBlocked = {},
-                onNotificationsBlocked = { notificationsBlocked = true }
-            )
-        }
+        masterControlsCard(
+            pinUsable = true,
+            notificationsGranted = false,
+            bluetoothConnectGranted = true,
+            onConfigChange = { configChanged = true },
+            onNotificationsBlocked = { notificationsBlocked = true }
+        )
 
         composeRule.onNodeWithTag("paranoid_mode_switch").performClick()
         composeRule.waitForIdle()
@@ -176,32 +233,42 @@ class ArmingGateUiInstrumentedTest {
     }
 
     @Test
-    fun settingsEnableWatchdog_arms_whenPinIsUsableAndNotificationsAreGranted() {
+    fun settingsParanoidPreset_refusesToArm_whenBluetoothConnectIsNotGranted() {
+        var configChanged = false
+        var bluetoothBlocked = false
+
+        masterControlsCard(
+            pinUsable = true,
+            notificationsGranted = true,
+            bluetoothConnectGranted = false,
+            onConfigChange = { configChanged = true },
+            onBluetoothBlocked = { bluetoothBlocked = true }
+        )
+
+        composeRule.onNodeWithTag("paranoid_mode_switch").performClick()
+        composeRule.waitForIdle()
+
+        assertTrue("the preset must be refused without bluetooth detection", bluetoothBlocked)
+        assertFalse("no config change may be committed when the preset is refused", configChanged)
+    }
+
+    @Test
+    fun settingsEnableWatchdog_arms_whenAllPreconditionsHold() {
         var configChanged: AppConfig? = null
         var notificationsBlocked = false
 
-        composeRule.setContent {
-            MasterControlsCard(
-                config = AppConfig(),
-                onConfigChange = { configChanged = it },
-                onConfigFlush = {},
-                context = context,
-                blockEnforcer = DevicePolicyEnforcer(context, DhizukuManager(context)),
-                dhizukuGranted = false,
-                blockStatus = "",
-                blockIsError = false,
-                onBlockStatusChange = { _, _ -> },
-                pinUsable = true,
-                notificationsGranted = true,
-                onEnableBlocked = {},
-                onNotificationsBlocked = { notificationsBlocked = true }
-            )
-        }
+        masterControlsCard(
+            pinUsable = true,
+            notificationsGranted = true,
+            bluetoothConnectGranted = true,
+            onConfigChange = { configChanged = it },
+            onNotificationsBlocked = { notificationsBlocked = true }
+        )
 
         composeRule.onNodeWithTag("enable_watchdog_switch").performClick()
         composeRule.waitForIdle()
 
-        assertTrue("arming must proceed when both preconditions hold", configChanged?.isEnabled == true)
+        assertTrue("arming must proceed when all preconditions hold", configChanged?.isEnabled == true)
         assertFalse(notificationsBlocked)
     }
 }

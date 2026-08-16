@@ -16,8 +16,11 @@
 
 package com.airgate.data.repository
 
+import android.Manifest
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.core.app.NotificationManagerCompat
 import com.airgate.data.crypto.PrefsCrypto
 import com.airgate.domain.model.AppConfig
@@ -39,12 +42,14 @@ class SecurityStateRepository(
     private val prefs: SharedPreferences,
     crypto: PrefsCrypto? = null,
     private val notificationsAllowedProvider: () -> Boolean = { true },
+    private val bluetoothConnectAllowedProvider: () -> Boolean = { true },
     elapsedRealtimeProvider: () -> Long = { android.os.SystemClock.elapsedRealtime() }
 ) {
     constructor(context: Context) : this(
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
         null,
-        { canPostAlarmNotifications(context) }
+        { canPostAlarmNotifications(context) },
+        { hasBluetoothConnectPermission(context) }
     )
 
     companion object {
@@ -61,6 +66,20 @@ class SecurityStateRepository(
         fun canPostAlarmNotifications(context: Context): Boolean {
             val compat = NotificationManagerCompat.from(context)
             return compat.areNotificationsEnabled() && compat.canUseFullScreenIntent()
+        }
+
+        /**
+         * True when the app holds [android.Manifest.permission.BLUETOOTH_CONNECT] on
+         * the platform versions that require it. On Android 12+ (S+) both receiving
+         * the Bluetooth state broadcasts and reading the live adapter state are gated
+         * behind this runtime permission, so a device armed without it is blind to
+         * Bluetooth activity. On older versions the legacy BLUETOOTH permission
+         * (install-time granted) is what applies and no runtime grant exists.
+         */
+        fun hasBluetoothConnectPermission(context: Context): Boolean {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
+            return context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) ==
+                PackageManager.PERMISSION_GRANTED
         }
     }
 
@@ -186,6 +205,14 @@ class SecurityStateRepository(
     fun areNotificationsAllowed(): Boolean = notificationsAllowedProvider()
 
     /**
+     * True when the app can currently read the live Bluetooth state on the platform
+     * versions that require the grant (BLUETOOTH_CONNECT, Android 12+). Arming
+     * without it is refused: a device armed while Bluetooth detection cannot work
+     * would be silently blind to a core air-gap signal.
+     */
+    fun isBluetoothConnectAllowed(): Boolean = bluetoothConnectAllowedProvider()
+
+    /**
      * Persists config.
      *
      * The watchdog can never be enabled while the Armed PIN is missing or its
@@ -201,6 +228,10 @@ class SecurityStateRepository(
      * alarm could be entirely silent. This check is transition-only: an already-armed
      * device stays armed if notifications are later revoked.
      *
+     * The same transition-only rule applies to Bluetooth detection: arming requires
+     * the Bluetooth state to be readable (BLUETOOTH_CONNECT on Android 12+), so no
+     * arming path can arm a device that is blind to Bluetooth activity.
+     *
      * Disabling is always allowed. Returns the effective config (which may differ
      * from the requested one).
      */
@@ -209,6 +240,7 @@ class SecurityStateRepository(
         val effective = when {
             config.isEnabled && !isPinUsable() -> config.copy(isEnabled = false)
             enablingNow && !notificationsAllowedProvider() -> config.copy(isEnabled = false)
+            enablingNow && !bluetoothConnectAllowedProvider() -> config.copy(isEnabled = false)
             else -> config
         }
         configStore.saveConfig(effective)

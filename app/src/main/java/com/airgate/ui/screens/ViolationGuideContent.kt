@@ -84,13 +84,13 @@ private val guideItems: List<ViolationGuideInfo> = listOf(
     ),
     ViolationGuideInfo(
         violationType = ViolationType.AIRPLANE_MODE_OFF,
-        trigger = "airplane mode is switched off",
+        trigger = "airplane mode is off \u2014 including if it was already off when monitoring started",
         alarmScreen = true,
         addsPoint = true
     ),
     ViolationGuideInfo(
         violationType = ViolationType.BLUETOOTH_ACTIVITY,
-        trigger = "Bluetooth is turned on",
+        trigger = "Bluetooth is on \u2014 including if it was already on when monitoring started",
         alarmScreen = true,
         addsPoint = true,
         note = "Passive proximity events (device found / bond changed) are logged only."

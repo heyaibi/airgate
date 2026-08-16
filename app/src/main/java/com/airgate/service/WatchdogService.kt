@@ -76,6 +76,7 @@ class WatchdogService : Service(), SignalListener {
         override fun run() {
             AuditLoop.tick(
                 checkWifiRadioState = { networkDetector.checkWifiRadioState() },
+                checkRadioState = { radioStateDetector.checkRadioState() },
                 checkSettingsState = { systemSettingsDetector.checkSettingsState() },
                 checkTamperOnly = { postureAudit.checkTamperOnly() }
             )
@@ -97,7 +98,7 @@ class WatchdogService : Service(), SignalListener {
         // events are ENFORCED (alarm / streak / wipe / hardening) is decided solely
         // by config.isEnabled in ThreatEngine / PostureAudit / SafetyNetScheduler.
         networkDetector = NetworkDetector(applicationContext, this)
-        radioStateDetector = RadioStateDetector(this)
+        radioStateDetector = RadioStateDetector(applicationContext, this)
         usbDetector = UsbDetector(applicationContext, this)
         systemSettingsDetector = SystemSettingsDetector(applicationContext, this, repository)
 

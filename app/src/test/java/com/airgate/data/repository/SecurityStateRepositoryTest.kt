@@ -498,6 +498,80 @@ class SecurityStateRepositoryTest {
     }
 
     @Test
+    fun `isBluetoothConnectAllowed reflects the provider`() {
+        val allowed = SecurityStateRepository(prefs, JvmPrefsCrypto(), bluetoothConnectAllowedProvider = { true })
+        val denied = SecurityStateRepository(prefs, JvmPrefsCrypto(), bluetoothConnectAllowedProvider = { false })
+
+        assertTrue(allowed.isBluetoothConnectAllowed())
+        assertFalse(denied.isBluetoothConnectAllowed())
+    }
+
+    @Test
+    fun `watchdog cannot be newly enabled when bluetooth connect is not allowed`() {
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        val denied = SecurityStateRepository(prefs, JvmPrefsCrypto(), bluetoothConnectAllowedProvider = { false })
+
+        val requested = denied.saveConfig(AppConfig(isEnabled = true))
+        // The enable request is coerced back to disabled: a device armed while
+        // Bluetooth state cannot be read would be silently blind to a core
+        // air-gap signal.
+        assertFalse(requested.isEnabled)
+        assertFalse(denied.getConfig().isEnabled)
+    }
+
+    @Test
+    fun `watchdog can be newly enabled when the PIN is set and bluetooth connect is allowed`() {
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        val allowed = SecurityStateRepository(prefs, JvmPrefsCrypto(), bluetoothConnectAllowedProvider = { true })
+
+        val requested = allowed.saveConfig(AppConfig(isEnabled = true))
+        assertTrue(requested.isEnabled)
+        assertTrue(allowed.getConfig().isEnabled)
+    }
+
+    @Test
+    fun `arming requires both notifications and bluetooth connect`() {
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        val notificationsAllowed = SecurityStateRepository(
+            prefs, JvmPrefsCrypto(),
+            notificationsAllowedProvider = { true },
+            bluetoothConnectAllowedProvider = { false }
+        )
+        val bluetoothAllowed = SecurityStateRepository(
+            prefs, JvmPrefsCrypto(),
+            notificationsAllowedProvider = { false },
+            bluetoothConnectAllowedProvider = { true }
+        )
+
+        assertFalse("notifications alone must not arm", notificationsAllowed.saveConfig(AppConfig(isEnabled = true)).isEnabled)
+        assertFalse("bluetooth connect alone must not arm", bluetoothAllowed.saveConfig(AppConfig(isEnabled = true)).isEnabled)
+    }
+
+    @Test
+    fun `disabling the watchdog never requires bluetooth connect`() {
+        val denied = SecurityStateRepository(prefs, JvmPrefsCrypto(), bluetoothConnectAllowedProvider = { false })
+
+        val requested = denied.saveConfig(AppConfig(isEnabled = false))
+        assertFalse(requested.isEnabled)
+    }
+
+    @Test
+    fun `an already-armed device stays armed when bluetooth connect is later revoked`() {
+        // The bluetooth gate guards the act of arming, not continued operation:
+        // revoking the grant must not silently disarm a live device.
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        val allowed = SecurityStateRepository(prefs, JvmPrefsCrypto(), bluetoothConnectAllowedProvider = { true })
+        assertTrue(allowed.saveConfig(AppConfig(isEnabled = true)).isEnabled)
+
+        val revoked = SecurityStateRepository(prefs, JvmPrefsCrypto(), bluetoothConnectAllowedProvider = { false })
+        // Toggling an unrelated setting with isEnabled still true does not disarm.
+        val updated = revoked.saveConfig(AppConfig(isEnabled = true, wipeThreshold = 5))
+        assertTrue(updated.isEnabled)
+        assertEquals(5, updated.wipeThreshold)
+        assertTrue(revoked.getConfig().isEnabled)
+    }
+
+    @Test
     fun `pending alarm round-trips through the repository`() {
         assertNull(repository.getPendingAlarm())
 

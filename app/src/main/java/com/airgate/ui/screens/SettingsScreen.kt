@@ -102,6 +102,7 @@ fun SettingsScreen(
     var showDryRunDisableDialog by remember { mutableStateOf(false) }
     var showPinRequiredDialog by remember { mutableStateOf(false) }
     var showNotificationsRequiredDialog by remember { mutableStateOf(false) }
+    var showBluetoothRequiredDialog by remember { mutableStateOf(false) }
     val pinUsable by remember { mutableStateOf(repository.isPinUsable()) }
     var dhizukuGranted by remember { mutableStateOf(dhizukuManager.isDhizukuAvailable()) }
     var overlayGranted by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
@@ -109,6 +110,7 @@ fun SettingsScreen(
         mutableStateOf(powerManager.isIgnoringBatteryOptimizations(context.packageName))
     }
     var notificationsGranted by remember { mutableStateOf(repository.areNotificationsAllowed()) }
+    var bluetoothConnectGranted by remember { mutableStateOf(repository.isBluetoothConnectAllowed()) }
     var blockStatus by remember { mutableStateOf("") }
     var blockIsError by remember { mutableStateOf(false) }
     val settingsScope = rememberCoroutineScope()
@@ -283,6 +285,27 @@ fun SettingsScreen(
         )
     }
 
+    if (showBluetoothRequiredDialog) {
+        AlertDialog(
+            onDismissRequest = { showBluetoothRequiredDialog = false },
+            title = { Text("Bluetooth Detection Required", fontWeight = FontWeight.Bold) },
+            text = { Text("The watchdog can only be enabled while Bluetooth detection is allowed — the monitor must be able to read Bluetooth state to catch a live radio. Grant it in the Required Permissions section above, then try again.") },
+            confirmButton = {
+                Button(
+                    onClick = { showBluetoothRequiredDialog = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("OK")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBluetoothRequiredDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     // Refresh statuses whenever this screen resumes (e.g. after returning
     // from the Dhizuku grant dialog or the system permission page).
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -293,6 +316,7 @@ fun SettingsScreen(
                 overlayGranted = Settings.canDrawOverlays(context)
                 batteryExempt = powerManager.isIgnoringBatteryOptimizations(context.packageName)
                 notificationsGranted = repository.areNotificationsAllowed()
+                bluetoothConnectGranted = repository.isBluetoothConnectAllowed()
                 refreshBlockStatus()
             }
         }
@@ -329,7 +353,9 @@ fun SettingsScreen(
                 overlayGranted = overlayGranted,
                 batteryExempt = batteryExempt,
                 notificationsGranted = notificationsGranted,
-                onNotificationsGrantedChange = { notificationsGranted = it }
+                onNotificationsGrantedChange = { notificationsGranted = it },
+                bluetoothConnectGranted = bluetoothConnectGranted,
+                onBluetoothConnectGrantedChange = { bluetoothConnectGranted = it }
             )
 
             ElevatedCard(
@@ -364,8 +390,10 @@ fun SettingsScreen(
                 },
                 pinUsable = pinUsable,
                 notificationsGranted = notificationsGranted,
+                bluetoothConnectGranted = bluetoothConnectGranted,
                 onEnableBlocked = { showPinRequiredDialog = true },
-                onNotificationsBlocked = { showNotificationsRequiredDialog = true }
+                onNotificationsBlocked = { showNotificationsRequiredDialog = true },
+                onBluetoothBlocked = { showBluetoothRequiredDialog = true }
             )
 
             PostureTamperAlarmsCard(

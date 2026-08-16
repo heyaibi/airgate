@@ -50,6 +50,7 @@ fun MasterActivationCard(
     context: Context,
     pinUsable: Boolean,
     notificationsGranted: Boolean,
+    bluetoothConnectGranted: Boolean,
     onEnableBlocked: () -> Unit,
     onConfigChange: (AppConfig) -> Unit
 ) {
@@ -89,9 +90,11 @@ fun MasterActivationCard(
                     checked = config.isEnabled,
                     onCheckedChange = { isChecked ->
                         // Refuse to arm until an Armed PIN is configured and readable
-                        // AND the app can post notifications — without either, the owner
-                        // could never disarm or could never see the wipe countdown.
-                        if (isChecked && (!pinUsable || !notificationsGranted)) {
+                        // AND the app can post notifications AND Bluetooth state can
+                        // be read — without these the owner could never disarm, could
+                        // never see the wipe countdown, or the monitor would be blind
+                        // to a live Bluetooth radio.
+                        if (isChecked && (!pinUsable || !notificationsGranted || !bluetoothConnectGranted)) {
                             onEnableBlocked()
                             return@Switch
                         }

@@ -49,8 +49,10 @@ fun MasterControlsCard(
     onBlockStatusChange: (String, Boolean) -> Unit,
     pinUsable: Boolean,
     notificationsGranted: Boolean,
+    bluetoothConnectGranted: Boolean,
     onEnableBlocked: () -> Unit,
-    onNotificationsBlocked: () -> Unit
+    onNotificationsBlocked: () -> Unit,
+    onBluetoothBlocked: () -> Unit
 ) {
     SettingsCard(title = "MASTER PREFERENCES") {
         SettingToggleRow(
@@ -69,6 +71,12 @@ fun MasterControlsCard(
                 // enforcement state, so the owner is sent to grant the permission.
                 if (enabled && !notificationsGranted) {
                     onNotificationsBlocked()
+                    return@SettingToggleRow
+                }
+                // Refuse to arm while Bluetooth state cannot be read: arming
+                // without it would be silently blind to a core air-gap signal.
+                if (enabled && !bluetoothConnectGranted) {
+                    onBluetoothBlocked()
                     return@SettingToggleRow
                 }
                 onConfigChange(config.copy(isEnabled = enabled))
@@ -101,6 +109,11 @@ fun MasterControlsCard(
                 // requirement as the master switch.
                 if (on && !notificationsGranted) {
                     onNotificationsBlocked()
+                    return@SettingToggleRow
+                }
+                // The preset also inherits the Bluetooth-readability requirement.
+                if (on && !bluetoothConnectGranted) {
+                    onBluetoothBlocked()
                     return@SettingToggleRow
                 }
                 // The preset only enforces strict limits; the owner's own

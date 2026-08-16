@@ -47,7 +47,10 @@ import java.util.concurrent.TimeUnit
  *     delivered to a matching control receiver but never reaches the detector —
  *     proving the filter, not the delivery mechanism, is what blocks the spoof;
  *  3. the airplane-mode and Bluetooth handling still fires the expected breaches
- *     through the real [Settings] read and intent extras.
+ *     through the real [Settings] read and intent extras;
+ *  4. the periodic poll ([RadioStateDetector.checkRadioState]) reads the live
+ *     airplane-mode setting, reports an already-violating state exactly once per
+ *     episode, and shares the episode latch with the broadcast path.
  */
 @RunWith(AndroidJUnit4::class)
 class RadioStateDetectorInstrumentedTest {
@@ -64,7 +67,7 @@ class RadioStateDetectorInstrumentedTest {
 
     @Test
     fun filterMatchesTrustedActionsOnly_neverFmActions() {
-        val filter = RadioStateDetector(RecordingListener()).getIntentFilter()
+        val filter = RadioStateDetector(context, RecordingListener()).getIntentFilter()
 
         for (action in TRUSTED_ACTIONS) {
             assertTrue(
@@ -86,7 +89,7 @@ class RadioStateDetectorInstrumentedTest {
     @Test
     fun spoofedFmBroadcasts_areDeliverableButNeverReachTheDetector() {
         val listener = RecordingListener()
-        val detector = RadioStateDetector(listener)
+        val detector = RadioStateDetector(context, listener)
 
         // Control receivers that DO match each FM action: they must be delivered,
         // proving that any installed app can send FM broadcasts and that only the
@@ -154,7 +157,7 @@ class RadioStateDetectorInstrumentedTest {
     @Test
     fun airplaneModeChanged_firesBreachOnlyWhenAirplaneIsOff() {
         val listener = RecordingListener()
-        val detector = RadioStateDetector(listener)
+        val detector = RadioStateDetector(context, listener)
         val resolver = context.contentResolver
 
         // Primary wiring check (no permission required): onReceive must read the
@@ -170,6 +173,7 @@ class RadioStateDetectorInstrumentedTest {
         // Stronger check when WRITE_SECURE_SETTINGS is provisioned (it throws
         // SecurityException when absent): force both airplane-mode states and
         // verify each branch end to end, then restore the original value.
+        provisionWriteSecureSettings()
         val original = current
         val writable = runCatching {
             Settings.Global.putInt(resolver, Settings.Global.AIRPLANE_MODE_ON, 1)
@@ -191,34 +195,44 @@ class RadioStateDetectorInstrumentedTest {
     }
 
     @Test
-    fun bluetoothStateChanged_firesBreachOnOnOrTurningOn_only() {
+    fun bluetoothStateChanged_reportsOncePerOnEpisodeAcrossBroadcasts() {
         val listener = RecordingListener()
-        val detector = RadioStateDetector(listener)
+        val detector = RadioStateDetector(context, listener)
 
         detector.onReceive(context, bluetoothStateChanged(BluetoothAdapter.STATE_ON))
         assertEquals(listOf(ViolationType.BLUETOOTH_ACTIVITY), listener.breaches.map { it.violationType })
+        assertEquals(listOf(ResponseTier.ALARM_STREAK), listener.breaches.map { it.tier })
 
-        listener.breaches.clear()
+        // The ON episode is latched: later state broadcasts for the same episode
+        // (TURNING_ON / repeated ON) must not duplicate the report.
         detector.onReceive(context, bluetoothStateChanged(BluetoothAdapter.STATE_TURNING_ON))
-        assertEquals(listOf(ViolationType.BLUETOOTH_ACTIVITY), listener.breaches.map { it.violationType })
+        detector.onReceive(context, bluetoothStateChanged(BluetoothAdapter.STATE_ON))
+        assertEquals(
+            "the on episode must be reported exactly once across broadcasts",
+            1,
+            listener.breaches.count { it.violationType == ViolationType.BLUETOOTH_ACTIVITY }
+        )
 
-        listener.breaches.clear()
+        // OFF opens the latch; a fresh ON is a new episode and reports again.
         detector.onReceive(context, bluetoothStateChanged(BluetoothAdapter.STATE_OFF))
-        assertTrue("BT OFF must not fire a breach", listener.breaches.isEmpty())
+        assertEquals(
+            "BT OFF must not fire a breach",
+            1,
+            listener.breaches.count { it.violationType == ViolationType.BLUETOOTH_ACTIVITY }
+        )
 
-        listener.breaches.clear()
-        detector.onReceive(context, bluetoothStateChanged(BluetoothAdapter.STATE_TURNING_OFF))
-        assertTrue("BT TURNING_OFF must not fire a breach", listener.breaches.isEmpty())
-
-        listener.breaches.clear()
-        detector.onReceive(context, bluetoothStateChanged(BluetoothAdapter.ERROR))
-        assertTrue("BT ERROR must not fire a breach", listener.breaches.isEmpty())
+        detector.onReceive(context, bluetoothStateChanged(BluetoothAdapter.STATE_ON))
+        assertEquals(
+            "a fresh ON after OFF must report a new episode",
+            2,
+            listener.breaches.count { it.violationType == ViolationType.BLUETOOTH_ACTIVITY }
+        )
     }
 
     @Test
     fun bluetoothDiscoveryEvents_areLoggedOnly() {
         val listener = RecordingListener()
-        val detector = RadioStateDetector(listener)
+        val detector = RadioStateDetector(context, listener)
 
         for (action in DISCOVERY_ACTIONS) {
             listener.breaches.clear()
@@ -234,6 +248,118 @@ class RadioStateDetectorInstrumentedTest {
                 listener.breaches.map { it.tier }
             )
         }
+    }
+
+    @Test
+    fun checkRadioState_airplanePoll_isDeterministicPerEpisode() {
+        val listener = RecordingListener()
+        val detector = RadioStateDetector(context, listener)
+        val resolver = context.contentResolver
+
+        provisionWriteSecureSettings()
+        val original = Settings.Global.getInt(resolver, Settings.Global.AIRPLANE_MODE_ON, 0)
+        val writable = runCatching {
+            Settings.Global.putInt(resolver, Settings.Global.AIRPLANE_MODE_ON, original)
+        }.getOrDefault(false)
+        try {
+            if (!writable) return // airplane poll needs WRITE_SECURE_SETTINGS to be exercised deterministically
+
+            // Airplane ON: the poll must not fire.
+            assertTrue(Settings.Global.putInt(resolver, Settings.Global.AIRPLANE_MODE_ON, 1))
+            detector.checkRadioState()
+            assertEquals(
+                "airplane on must not fire an AIRPLANE_MODE_OFF breach",
+                emptyList<ViolationType>(),
+                listener.breaches.map { it.violationType }
+            )
+
+            // Airplane OFF: the very first poll observation (the initial-state case
+            // at service start) must fire exactly one poll-sourced breach.
+            assertTrue(Settings.Global.putInt(resolver, Settings.Global.AIRPLANE_MODE_ON, 0))
+            detector.checkRadioState()
+            assertEquals(
+                "airplane off must fire a poll-sourced AIRPLANE_MODE_OFF breach",
+                listOf(ViolationType.AIRPLANE_MODE_OFF),
+                listener.breaches.map { it.violationType }
+            )
+            assertEquals("RADIO_POLL", listener.breaches.single().rawMetadata["source"])
+
+            // Sustained OFF on later ticks must not re-fire (episode latched).
+            detector.checkRadioState()
+            detector.checkRadioState()
+            assertEquals(1, listener.breaches.count { it.violationType == ViolationType.AIRPLANE_MODE_OFF })
+
+            // Back ON then OFF again: a new episode reports once.
+            assertTrue(Settings.Global.putInt(resolver, Settings.Global.AIRPLANE_MODE_ON, 1))
+            detector.checkRadioState()
+            assertEquals(1, listener.breaches.count { it.violationType == ViolationType.AIRPLANE_MODE_OFF })
+            assertTrue(Settings.Global.putInt(resolver, Settings.Global.AIRPLANE_MODE_ON, 0))
+            detector.checkRadioState()
+            assertEquals(
+                "a fresh OFF after ON must report a new episode",
+                2,
+                listener.breaches.count { it.violationType == ViolationType.AIRPLANE_MODE_OFF }
+            )
+        } finally {
+            runCatching { Settings.Global.putInt(resolver, Settings.Global.AIRPLANE_MODE_ON, original) }
+        }
+    }
+
+    @Test
+    fun checkRadioState_neverThrows_andEmitsOnlyWellFormedPollBreaches() {
+        // The exact emissions depend on the device's live radio state (not
+        // asserted here); what is stable regardless of state is that the poll
+        // never throws, emits only correctly-formed poll breaches, and reports
+        // each signal at most once per poll call (the once-per-episode latch).
+        // The deterministic airplane-poll behavior is pinned by
+        // [checkRadioState_airplanePoll_isDeterministicPerEpisode].
+        val listener = RecordingListener()
+        val detector = RadioStateDetector(context, listener)
+
+        repeat(3) { detector.checkRadioState() }
+
+        for (breach in listener.breaches) {
+            when (breach.violationType) {
+                ViolationType.BLUETOOTH_ACTIVITY -> {
+                    assertEquals(ResponseTier.ALARM_STREAK, breach.tier)
+                    assertEquals("BLUETOOTH", breach.rawMetadata["wireless_interface"])
+                    assertEquals("RADIO_POLL", breach.rawMetadata["source"])
+                    assertTrue(!breach.rawMetadata["state"].isNullOrEmpty())
+                }
+                ViolationType.AIRPLANE_MODE_OFF -> {
+                    assertEquals(ResponseTier.ALARM_STREAK, breach.tier)
+                    assertEquals("RADIO_POLL", breach.rawMetadata["source"])
+                }
+                else -> throw AssertionError("unexpected poll breach ${breach.violationType}")
+            }
+        }
+        assertTrue(
+            "bluetooth must be reported at most once per poll",
+            listener.breaches.count { it.violationType == ViolationType.BLUETOOTH_ACTIVITY } <= 3
+        )
+        assertTrue(
+            "airplane must be reported at most once per poll",
+            listener.breaches.count { it.violationType == ViolationType.AIRPLANE_MODE_OFF } <= 3
+        )
+    }
+
+    /**
+     * Best-effort grant of WRITE_SECURE_SETTINGS so the deterministic
+     * airplane-mode tests run on every device/emulator (including CI), not just
+     * on locally-provisioned images. No-op when the image refuses the grant;
+     * the tests' `writable` checks then skip gracefully.
+     */
+    private fun provisionWriteSecureSettings() {
+        val pfd = InstrumentationRegistry.getInstrumentation().uiAutomation
+            .executeShellCommand(
+                "pm grant ${context.packageName} android.permission.WRITE_SECURE_SETTINGS"
+            )
+        try {
+            java.io.FileInputStream(pfd.fileDescriptor).use { it.readBytes() }
+        } finally {
+            pfd.close()
+        }
+        Thread.sleep(300)
     }
 
     private fun sendFmBroadcasts() {

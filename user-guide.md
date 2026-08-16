@@ -8,7 +8,7 @@ Airgate is the watchdog on an **air-gapped** (network-isolated) Android phone us
 
 The app cannot do much on its own. It *monitors*, *alerts*, and — through the Device Owner authority granted by **Dhizuku** — *enforces* and, at the very end, *wipes*. Three ideas are worth understanding before you start; the rest of the guide builds on them.
 
-**The watchdog.** Imagine a security guard doing rounds at a bank. The guard never leaves, checks the doors and windows on a schedule, and reacts the moment something is open that should not be. Airgate is that guard: a foreground service that runs continuously, feeds four detectors, and reacts within seconds to a network appearing, a USB cable being plugged in, a radio being switched on, or the system settings being tampered with.
+**The watchdog.** Imagine a security guard doing rounds at a bank. The guard never leaves, checks the doors and windows on a schedule, and reacts the moment something is open that should not be. Airgate is that guard: a foreground service that runs continuously, feeds four detectors, and reacts within seconds to a network appearing, a USB cable being plugged in, a radio being switched on — or already on when monitoring starts — or the system settings being tampered with.
 
 **The threat score.** The guard does not shoot on sight — it keeps a record and only acts after enough is wrong. Each breach that matters adds **threat points** to a running total (the *streak*), shown as a meter on the dashboard. When the streak reaches the **wipe threshold** (3 points by default), the app decides the air gap is truly broken and initiates a wipe. One important rule: each family of signals (Wireless, USB, System Tamper) can contribute at most **one point per 24 hours**, so a single flapping radio cannot quietly rack up the whole threshold on its own.
 
@@ -41,7 +41,7 @@ The dashboard is your daily overview and the place you will check most often.
 - **ALARM ACTIVE** — a breach added a point but did not reach the threshold yet.
 - **COUNTDOWN WIPE / WIPING** — the threshold was reached and the wipe path is running (see step 8).
 
-**The Protection switch.** The "Protection" card is the master on/off for the background watchdog. The app deliberately starts **paused**, so you can review the settings before anything is armed — an alarm must never fire before you have seen what is installed. Tap the switch to arm the watchdog when you are ready. The switch will only arm once a usable Armed PIN is set and the app can post notifications — arming a device whose alarm path could be entirely silent is refused (you'll be told which one is missing).
+**The Protection switch.** The "Protection" card is the master on/off for the background watchdog. The app deliberately starts **paused**, so you can review the settings before anything is armed — an alarm must never fire before you have seen what is installed. Tap the switch to arm the watchdog when you are ready. The switch will only arm once a usable Armed PIN is set, the app can post notifications, and Bluetooth detection is allowed (BLUETOOTH_CONNECT on Android 12+) — arming a device whose alarm path could be entirely silent or whose Bluetooth detection is blind is refused (you'll be told which one is missing).
 
 When you'd use it: leave it **on** while the phone sits in storage. Turn it **off** only when you want to silence everything (for example, while you are deliberately working on the phone during setup or recovery). Note that turning it off pauses enforcement but the service still runs.
 
@@ -101,6 +101,7 @@ The phone cannot function without these, so the card turns red until every grant
 - **Dhizuku Access** — enables policy enforcement and the wipe via the Device Owner. Tap "Authorize Dhizuku" and confirm in the Dhizuku app.
 - **Display over other apps** — the alarm must be able to show over the lock screen. Tap "Allow Overlay".
 - **Notifications** — the alarm needs notifications to alert you. Tap "Allow Notifications".
+- **Bluetooth detection** — the monitor must be able to read the live Bluetooth state (Android 12+ grants this separately). Without it, arming is refused: a Bluetooth radio switched on or already on could go unnoticed. Tap "Allow Bluetooth Detection".
 - **Battery optimization** — *recommended*, not strictly required. Without the exemption the system may put the watchdog to sleep in Doze, and a sleeping watchdog misses breaches. Tap "Allow Exemption".
 
 ### Master preferences

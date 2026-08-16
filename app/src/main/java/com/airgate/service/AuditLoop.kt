@@ -19,22 +19,26 @@ package com.airgate.service
 /**
  * The composition of one periodic audit tick: which monitors run every cycle.
  *
- * [tick] runs the Wi-Fi radio-state poll, the system-settings poll, and the
- * tamper-only check, in that order. Every step is isolated so a failing monitor
- * never takes the rest of the tick down: a flaky Wi-Fi read must not starve the
- * settings poll, and neither may starve the security-critical tamper check.
- * Kept framework-free and unit-testable so the loop's composition is pinned by
- * tests instead of living only inside a service's anonymous runnable.
- * Rescheduling (the interval between ticks) belongs to the caller; this object
- * runs a single tick and always returns normally.
+ * [tick] runs the Wi-Fi radio-state poll, the Bluetooth/airplane radio-state
+ * poll, the system-settings poll, and the tamper-only check, in that order.
+ * Every step is isolated so a failing monitor — including one that throws an
+ * [Error] rather than an [Exception] — never takes the rest of the tick down:
+ * a flaky Wi-Fi read must not starve the settings poll, and neither may starve
+ * the security-critical tamper check. Kept framework-free and unit-testable so
+ * the loop's composition is pinned by tests instead of living only inside a
+ * service's anonymous runnable. Rescheduling (the interval between ticks)
+ * belongs to the caller; this object runs a single tick and always returns
+ * normally.
  */
 internal object AuditLoop {
     fun tick(
         checkWifiRadioState: () -> Unit,
+        checkRadioState: () -> Unit,
         checkSettingsState: () -> Unit,
         checkTamperOnly: () -> Boolean
     ) {
         runIsolated { checkWifiRadioState() }
+        runIsolated { checkRadioState() }
         runIsolated { checkSettingsState() }
         runIsolated { checkTamperOnly() }
     }
@@ -42,10 +46,14 @@ internal object AuditLoop {
     private fun runIsolated(step: () -> Unit) {
         try {
             step()
-        } catch (e: Exception) {
-            // A failing step must not take the rest of the tick down; every other
-            // step still runs, and the caller's rescheduling continues because
-            // tick always returns normally.
+        } catch (t: Throwable) {
+            // A failing step must not take the rest of the tick down — and the
+            // tick itself must always return normally so the caller's reschedule
+            // keeps the loop alive. Catching Throwable (not just Exception) means
+            // even an Error from one step cannot silently kill the monitoring
+            // loop; if it could, the poll backstops (Wi-Fi and Bluetooth/airplane
+            // state) would die with it until the service was recreated. Every
+            // other step still runs, and the loop re-arms for the next tick.
         }
     }
 }

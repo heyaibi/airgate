@@ -67,13 +67,19 @@ fun RequiredPermissionsCard(
     overlayGranted: Boolean,
     batteryExempt: Boolean,
     notificationsGranted: Boolean,
-    onNotificationsGrantedChange: (Boolean) -> Unit
+    onNotificationsGrantedChange: (Boolean) -> Unit,
+    bluetoothConnectGranted: Boolean,
+    onBluetoothConnectGrantedChange: (Boolean) -> Unit
 ) {
     val notificationsPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> onNotificationsGrantedChange(granted) }
 
-    val requiredGranted = dhizukuGranted && overlayGranted && notificationsGranted
+    val bluetoothPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> onBluetoothConnectGrantedChange(granted) }
+
+    val requiredGranted = dhizukuGranted && overlayGranted && notificationsGranted && bluetoothConnectGranted
     ElevatedCard(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.elevatedCardColors(
@@ -267,6 +273,52 @@ fun RequiredPermissionsCard(
                 ) {
                     Text("Allow Full-Screen Alerts", fontWeight = FontWeight.SemiBold)
                 }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+
+            // Bluetooth state detection
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Bluetooth detection", modifier = Modifier.weight(1f).padding(end = 16.dp), fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = if (bluetoothConnectGranted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer
+                ) {
+                    Text(
+                        text = if (bluetoothConnectGranted) "Granted" else "Required",
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (bluetoothConnectGranted) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
+            Text(
+                text = "The monitor must be able to read Bluetooth state to detect a live radio.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 16.sp
+            )
+            Button(
+                onClick = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        bluetoothPermissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
+                    } else {
+                        onBluetoothConnectGrantedChange(true)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (bluetoothConnectGranted) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.error,
+                    contentColor = if (bluetoothConnectGranted) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onError
+                )
+            ) {
+                Text("Allow Bluetooth Detection", fontWeight = FontWeight.SemiBold)
             }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))

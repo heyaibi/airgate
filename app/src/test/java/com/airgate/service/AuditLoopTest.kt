@@ -22,41 +22,61 @@ import org.junit.Test
 
 /**
  * Composition tests for the periodic audit tick. These pin the contract that
- * the Wi-Fi radio-state poll is a first-class member of every audit loop tick
- * (alongside the settings poll and the tamper check), and that a failing step
- * never blocks the rest of the tick.
+ * the Wi-Fi radio-state poll and the Bluetooth/airplane radio-state poll are
+ * first-class members of every audit loop tick (alongside the settings poll and
+ * the tamper check), and that a failing step never blocks the rest of the tick.
  */
 class AuditLoopTest {
 
     @Test
-    fun `one tick runs the wifi poll, settings poll and tamper check in order`() {
+    fun `one tick runs the wifi poll, radio poll, settings poll and tamper check in order`() {
         val order = mutableListOf<String>()
 
         AuditLoop.tick(
             checkWifiRadioState = { order += "wifi" },
+            checkRadioState = { order += "radio" },
             checkSettingsState = { order += "settings" },
             checkTamperOnly = { order += "tamper"; true }
         )
 
         assertEquals(
-            listOf("wifi", "settings", "tamper"),
+            listOf("wifi", "radio", "settings", "tamper"),
             order
         )
     }
 
     @Test
-    fun `a throwing wifi poll does not block the settings poll or tamper check`() {
+    fun `a throwing wifi poll does not block the radio poll, settings poll or tamper check`() {
         val order = mutableListOf<String>()
 
         AuditLoop.tick(
             checkWifiRadioState = { order += "wifi"; throw RuntimeException("wifi read failed") },
+            checkRadioState = { order += "radio" },
             checkSettingsState = { order += "settings" },
             checkTamperOnly = { order += "tamper"; true }
         )
 
         assertEquals(
-            "a failing wifi poll must not take down the settings poll and tamper check",
-            listOf("wifi", "settings", "tamper"),
+            "a failing wifi poll must not take down the radio/settings polls and tamper check",
+            listOf("wifi", "radio", "settings", "tamper"),
+            order
+        )
+    }
+
+    @Test
+    fun `a throwing radio poll does not block the settings poll or tamper check`() {
+        val order = mutableListOf<String>()
+
+        AuditLoop.tick(
+            checkWifiRadioState = { order += "wifi" },
+            checkRadioState = { order += "radio"; throw RuntimeException("radio read failed") },
+            checkSettingsState = { order += "settings" },
+            checkTamperOnly = { order += "tamper"; true }
+        )
+
+        assertEquals(
+            "a failing radio poll must not take down the settings poll and tamper check",
+            listOf("wifi", "radio", "settings", "tamper"),
             order
         )
     }
@@ -67,11 +87,12 @@ class AuditLoopTest {
 
         AuditLoop.tick(
             checkWifiRadioState = { order += "wifi" },
+            checkRadioState = { order += "radio" },
             checkSettingsState = { order += "settings"; throw RuntimeException("settings read failed") },
             checkTamperOnly = { order += "tamper"; true }
         )
 
-        assertEquals(listOf("wifi", "settings", "tamper"), order)
+        assertEquals(listOf("wifi", "radio", "settings", "tamper"), order)
     }
 
     @Test
@@ -79,6 +100,7 @@ class AuditLoopTest {
         var tamperRan = false
         AuditLoop.tick(
             checkWifiRadioState = {},
+            checkRadioState = {},
             checkSettingsState = {},
             checkTamperOnly = { tamperRan = true; throw RuntimeException("tamper check failed") }
         )
@@ -87,23 +109,57 @@ class AuditLoopTest {
     }
 
     @Test
+    fun `a step throwing an Error does not block the rest of the tick`() {
+        // An Error (not just an Exception) in one step must not kill the loop:
+        // if it propagated out of tick, the caller's reschedule would never run
+        // and the poll backstops would die for the process lifetime.
+        val order = mutableListOf<String>()
+
+        AuditLoop.tick(
+            checkWifiRadioState = { order += "wifi"; throw AssertionError("hard failure") },
+            checkRadioState = { order += "radio" },
+            checkSettingsState = { order += "settings" },
+            checkTamperOnly = { order += "tamper"; true }
+        )
+
+        assertEquals(
+            "a failing wifi poll throwing an Error must not take down the remaining steps",
+            listOf("wifi", "radio", "settings", "tamper"),
+            order
+        )
+    }
+
+    @Test
+    fun `an Error from every step is swallowed and the tick still returns normally`() {
+        // Even in the worst case the tick must return so the caller re-arms.
+        AuditLoop.tick(
+            checkWifiRadioState = { throw AssertionError("wifi") },
+            checkRadioState = { throw AssertionError("radio") },
+            checkSettingsState = { throw AssertionError("settings") },
+            checkTamperOnly = { throw AssertionError("tamper") }
+        )
+    }
+
+    @Test
     fun `each step runs exactly once per tick`() {
         var wifiCount = 0
+        var radioCount = 0
         var settingsCount = 0
         var tamperCount = 0
 
-        AuditLoop.tick(
-            checkWifiRadioState = { wifiCount++ },
-            checkSettingsState = { settingsCount++ },
-            checkTamperOnly = { tamperCount++; true }
-        )
-        AuditLoop.tick(
-            checkWifiRadioState = { wifiCount++ },
-            checkSettingsState = { settingsCount++ },
-            checkTamperOnly = { tamperCount++; true }
-        )
+        fun runTick() {
+            AuditLoop.tick(
+                checkWifiRadioState = { wifiCount++ },
+                checkRadioState = { radioCount++ },
+                checkSettingsState = { settingsCount++ },
+                checkTamperOnly = { tamperCount++; true }
+            )
+        }
+        runTick()
+        runTick()
 
         assertEquals(2, wifiCount)
+        assertEquals(2, radioCount)
         assertEquals(2, settingsCount)
         assertEquals(2, tamperCount)
     }
