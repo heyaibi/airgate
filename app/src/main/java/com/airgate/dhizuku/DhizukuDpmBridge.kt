@@ -36,7 +36,13 @@ import org.lsposed.hiddenapibypass.HiddenApiBypass
 internal class DhizukuDpmBridge(
     private val context: Context,
     private val connection: DhizukuConnection,
-    internal val wrapper: DhizukuBinderWrapper?
+    internal val wrapper: DhizukuBinderWrapper?,
+    /**
+     * Test-only override: when present, [wrappedDpm] returns it directly, so the
+     * platform wipe path can be exercised against a Robolectric-shadowed
+     * [DevicePolicyManager] on the JVM without the Dhizuku binder plumbing.
+     */
+    private val injectedDpm: DevicePolicyManager? = null
 ) {
     fun getAdminComponent(): ComponentName {
         if (wrapper != null) {
@@ -60,6 +66,7 @@ internal class DhizukuDpmBridge(
      */
     @SuppressLint("SoonBlockedPrivateApi", "PrivateApi")
     fun wrappedDpm(): DevicePolicyManager? {
+        if (injectedDpm != null) return injectedDpm
         if (!connection.init()) return null
         return try {
             if (!Dhizuku.isPermissionGranted()) return null
