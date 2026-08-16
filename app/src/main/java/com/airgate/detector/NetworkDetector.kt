@@ -38,62 +38,7 @@ class NetworkDetector(
             networkCapabilities: NetworkCapabilities
         ) {
             super.onCapabilitiesChanged(network, networkCapabilities)
-
-            val caps = networkCapabilities
-            val hasInternet = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            val hasValidated = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-            val hasValidatedInternet = hasInternet && hasValidated
-
-            val transportStr = when {
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WIFI"
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "CELLULAR"
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ETHERNET"
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH) -> "BLUETOOTH"
-                else -> "OTHER"
-            }
-
-            val source = if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) "WIFI_MONITOR" else "NETWORK_MONITOR"
-
-            // VALIDATED_NETWORK must be transport-agnostic — it must also fire
-            // on Wi-Fi, not only when the Wi-Fi branch below happens not to match.
-            if (hasValidatedInternet) {
-                listener.onBreachDetected(
-                    BreachEvent(
-                        id = UUID.randomUUID().toString(),
-                        timestamp = System.currentTimeMillis(),
-                        violationType = ViolationType.VALIDATED_NETWORK,
-                        tier = ViolationType.VALIDATED_NETWORK.defaultTier,
-                        weight = ViolationType.VALIDATED_NETWORK.defaultWeight,
-                        rawMetadata = mapOf("transport" to transportStr, "source" to source)
-                    )
-                )
-            }
-
-            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) && hasValidatedInternet) {
-                listener.onBreachDetected(
-                    BreachEvent(
-                        id = UUID.randomUUID().toString(),
-                        timestamp = System.currentTimeMillis(),
-                        violationType = ViolationType.WIFI_TRANSCEIVER_ENABLED,
-                        tier = ViolationType.WIFI_TRANSCEIVER_ENABLED.defaultTier,
-                        weight = ViolationType.WIFI_TRANSCEIVER_ENABLED.defaultWeight,
-                        rawMetadata = mapOf("transport" to "WIFI", "source" to source)
-                    )
-                )
-            }
-
-            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) && (hasInternet || hasValidated)) {
-                listener.onBreachDetected(
-                    BreachEvent(
-                        id = UUID.randomUUID().toString(),
-                        timestamp = System.currentTimeMillis(),
-                        violationType = ViolationType.OTG_ETHERNET_ATTACHED,
-                        tier = ViolationType.OTG_ETHERNET_ATTACHED.defaultTier,
-                        weight = ViolationType.OTG_ETHERNET_ATTACHED.defaultWeight,
-                        rawMetadata = mapOf("transport" to transportStr, "source" to source)
-                    )
-                )
-            }
+            resolveBreaches(networkCapabilities).forEach(listener::onBreachDetected)
         }
 
         override fun onLost(network: Network) {
@@ -121,6 +66,100 @@ class NetworkDetector(
             connectivityManager.unregisterNetworkCallback(networkCallback)
         } catch (e: Exception) {
             // Ignore unregister errors
+        }
+    }
+
+    companion object {
+        /**
+         * Framework-coupled entry point: extracts the capability/transport state
+         * from a [NetworkCapabilities] snapshot and resolves the breaches to raise.
+         * Kept in the companion so the decision logic below stays free of Android
+         * framework calls and every branch is JVM-testable.
+         */
+        internal fun resolveBreaches(caps: NetworkCapabilities): List<BreachEvent> {
+            return resolveBreaches(
+                hasInternet = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET),
+                hasValidated = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
+                hasWifiTransport = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI),
+                hasCellularTransport = caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR),
+                hasEthernetTransport = caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET),
+                hasBluetoothTransport = caps.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH)
+            )
+        }
+
+        /**
+         * Pure decision logic for one capabilities snapshot: maps the
+         * framework-observed capability/transport state to the breaches to raise.
+         * Free of Android framework calls so every branch is unit-testable.
+         *
+         * The Wi-Fi transceiver violation fires on Wi-Fi transport presence alone,
+         * independent of NET_CAPABILITY_VALIDATED: the air-gap breach is the radio
+         * being live, whether or not the network has passed internet validation
+         * (captive portals and LAN-only APs never validate).
+         */
+        internal fun resolveBreaches(
+            hasInternet: Boolean,
+            hasValidated: Boolean,
+            hasWifiTransport: Boolean,
+            hasCellularTransport: Boolean,
+            hasEthernetTransport: Boolean,
+            hasBluetoothTransport: Boolean
+        ): List<BreachEvent> {
+            val hasValidatedInternet = hasInternet && hasValidated
+
+            val transportStr = when {
+                hasWifiTransport -> "WIFI"
+                hasCellularTransport -> "CELLULAR"
+                hasEthernetTransport -> "ETHERNET"
+                hasBluetoothTransport -> "BLUETOOTH"
+                else -> "OTHER"
+            }
+
+            // VALIDATED_NETWORK must be transport-agnostic — it must also fire
+            // on Wi-Fi, not only when the Wi-Fi branch below happens not to match.
+            val source = if (hasWifiTransport) "WIFI_MONITOR" else "NETWORK_MONITOR"
+
+            val breaches = mutableListOf<BreachEvent>()
+
+            if (hasValidatedInternet) {
+                breaches += breachOf(
+                    ViolationType.VALIDATED_NETWORK,
+                    rawMetadata = mapOf("transport" to transportStr, "source" to source)
+                )
+            }
+
+            // Wi-Fi transport present means the transceiver is live and the air gap
+            // is broken — the state itself is the violation, independent of whether
+            // the network has validated internet connectivity.
+            if (hasWifiTransport) {
+                breaches += breachOf(
+                    ViolationType.WIFI_TRANSCEIVER_ENABLED,
+                    rawMetadata = mapOf("transport" to "WIFI", "source" to source)
+                )
+            }
+
+            if (hasEthernetTransport && (hasInternet || hasValidated)) {
+                breaches += breachOf(
+                    ViolationType.OTG_ETHERNET_ATTACHED,
+                    rawMetadata = mapOf("transport" to transportStr, "source" to source)
+                )
+            }
+
+            return breaches
+        }
+
+        private fun breachOf(
+            violationType: ViolationType,
+            rawMetadata: Map<String, String>
+        ): BreachEvent {
+            return BreachEvent(
+                id = UUID.randomUUID().toString(),
+                timestamp = System.currentTimeMillis(),
+                violationType = violationType,
+                tier = violationType.defaultTier,
+                weight = violationType.defaultWeight,
+                rawMetadata = rawMetadata
+            )
         }
     }
 }
