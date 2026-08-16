@@ -22,7 +22,7 @@
 
 - **Reactive hardening** — on breach, the engine re-asserts airplane mode and re-locks the Device Owner restrictions.
 - **Self-defense audit** — periodically verifies Dhizuku Device Owner authority and pins the app's own signature (hash baked into the build from the signing certificate), detecting compromise.
-- **Block Debugging Features** — a single toggle governs ADB / developer-options enforcement; **USB data transfer** (MTP/PTP/tethering/ethernet) is *always* enforced regardless of that toggle.
+- **Block Debugging Features** — a single toggle governs ADB / developer-options enforcement; **USB data transfer** (MTP/PTP/ADB/accessory/MIDI/tethering/ethernet) is *always* enforced regardless of that toggle.
 
 ### App experience
 
@@ -73,7 +73,7 @@ Every monitored condition, its trigger, response tier, whether it shows the full
 |---|---|---|---|---|---|
 | USB tethering (RNDIS) | USB tethering is enabled | ALARM_STREAK | ✓ | ✓ | |
 | USB host link | A USB device enumerates as a host link (OTG) | ALARM_STREAK | ✓ | ✓ | Always enforced — a power-only charger or power bank is not a violation |
-| USB data function | A USB data function is active — MTP, PTP or ADB | ALARM_STREAK | ✓ | ✓ | Always enforced, independent of Block Debugging Features; power-only charge sessions don't trigger it |
+| USB data function | A USB data function is active — MTP, PTP, ADB, accessory, MIDI or another gadget function | ALARM_STREAK | ✓ | ✓ | Always enforced, independent of Block Debugging Features; power-only charge sessions don't trigger it |
 | ADB enabled | ADB (USB debugging) is switched on | ALARM_STREAK | ✓ | ✓ | Ignored while Block Debugging Features is off |
 | OTG ethernet attached | An ethernet adapter is attached | ALARM_STREAK | ✓ | ✓ | |
 

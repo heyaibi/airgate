@@ -182,7 +182,7 @@ When you'd experience this: during your own testing (via the simulation harness)
 
 ## Troubleshooting & FAQ
 
-**I plugged in a charger and the alarm went off.** Power-only charging — from a wall adapter or a power bank — is *not* a violation and never triggers the USB detectors. A real data session (MTP/PTP file transfer, ADB, tethering, or an ethernet adapter) is. If you used a data cable, use a charge-only cable when charging.
+**I plugged in a charger and the alarm went off.** Power-only charging — from a wall adapter or a power bank — is *not* a violation and never triggers the USB detectors. A real data session (MTP/PTP file transfer, ADB, tethering, accessory/MIDI gadget mode, or an ethernet adapter) is. If you used a data cable, use a charge-only cable when charging.
 
 **My threat score went up but I did not do anything.** Open **Security Activity** — it records the category and the reason. Common silent causes: a SIM card present in a slot, the system clock drifting beyond the skew tolerance (step 6), airplane mode being off, or a momentary network registration.
 

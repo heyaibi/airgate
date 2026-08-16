@@ -78,9 +78,9 @@ class ThreatEngine(
             ViolationType.DEVELOPER_OPTIONS_TOGGLE -> !config.blockDebuggingFeatures
             // USB DATA TRANSFER is a separate feature and is never authorized by the
             // debugging block. Power-only sessions (charger / power bank) never fire
-            // these detectors; only a real data session (MTP/PTP/ADB function, host
-            // attach, tethering, ethernet) does, and that is always an exfiltration
-            // vector regardless of the block setting.
+            // these detectors; only a real data session (MTP/PTP/ADB/accessory/MIDI
+            // function, host attach, tethering, ethernet) does, and that is always an
+            // exfiltration vector regardless of the block setting.
             else -> false
         }
         if (suppressed) return

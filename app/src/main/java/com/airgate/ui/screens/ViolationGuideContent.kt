@@ -110,7 +110,7 @@ private val guideItems: List<ViolationGuideInfo> = listOf(
     ),
     ViolationGuideInfo(
         violationType = ViolationType.USB_FUNCTION_NOT_NONE,
-        trigger = "a USB data function is active \u2014 MTP, PTP or ADB",
+        trigger = "a USB data function is active \u2014 MTP, PTP, ADB, accessory or MIDI",
         alarmScreen = true,
         addsPoint = true,
         note = "Always enforced, independent of Block Debugging Features. Power-only charge sessions don't trigger it."
