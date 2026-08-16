@@ -1,3 +1,4 @@
+import com.airgate.signing.DebugSignatureHashValueSource
 import com.airgate.signing.SignaturePin
 import com.airgate.signing.SignaturePinResolver
 
@@ -42,13 +43,14 @@ android {
 
     buildTypes {
         debug {
-            val pin = SignaturePinResolver.debugPin(signingConfigs.getByName("debug").storeFile)
-            when (pin) {
-                is SignaturePin.Pinned -> buildConfigField(
-                    "String", "EXPECTED_SIGNATURE_HASH", "\"${pin.sha256Hex}\""
-                )
-                is SignaturePin.Failed -> throw GradleException(pin.reason)
+            // The debug signature pin is resolved through a ValueSource: creating
+            // the debug keystore (when missing) runs the external keytool process,
+            // which the configuration cache only permits at configuration time when
+            // it happens inside a ValueSource (see DebugSignatureHashValueSource).
+            val debugHash = providers.of(DebugSignatureHashValueSource::class.java) {
+                parameters.storeFile.set(signingConfigs.getByName("debug").storeFile)
             }
+            buildConfigField("String", "EXPECTED_SIGNATURE_HASH", "\"${debugHash.get()}\"")
         }
 
         release {
