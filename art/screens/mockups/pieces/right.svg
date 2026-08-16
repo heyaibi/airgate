@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="34" height="2600" viewBox="0 0 34 2600">
+  <defs>
+    <filter id="bs" x="-300%" y="-200%" width="700%" height="600%">
+      <feDropShadow dx="-1" dy="1.5" stdDeviation="1.5" flood-color="#0a0f1f" flood-opacity="0.65"/>
+    </filter>
+  </defs>
+  <!-- right side: bezel rail spans x=0..24 (SIDE wide, aligned with the body edge at the
+       rail's left side); the volume buttons at x=24..34 protrude PAST the body edge so
+       they stick out beyond the phone silhouette. Cropped to the screen height at merge. -->
+  <rect width="24" height="2600" fill="#1c1c1c"/>
+  <!-- volume up / down buttons: solid chassis fill, subtle drop shadow for depth -->
+  <rect x="24" y="830" width="10" height="72" rx="5" fill="#1c1c1c" filter="url(#bs)"/>
+  <rect x="24" y="930" width="10" height="72" rx="5" fill="#1c1c1c" filter="url(#bs)"/>
+</svg>

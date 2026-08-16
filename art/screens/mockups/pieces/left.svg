@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="34" height="2600" viewBox="0 0 34 2600">
+  <defs>
+    <filter id="bs" x="-300%" y="-200%" width="700%" height="600%">
+      <feDropShadow dx="1" dy="1.5" stdDeviation="1.5" flood-color="#0a0f1f" flood-opacity="0.65"/>
+    </filter>
+  </defs>
+  <!-- left side: bezel rail spans x=10..34 (SIDE wide, aligned with the body edge at
+       the rail's right side); the power button at x=0..10 protrudes PAST the body edge
+       so it sticks out beyond the phone silhouette. Cropped to the screen height at merge. -->
+  <rect x="10" width="24" height="2600" fill="#1c1c1c"/>
+  <!-- power button: solid chassis fill, subtle drop shadow for depth -->
+  <rect x="0" y="900" width="10" height="110" rx="5" fill="#1c1c1c" filter="url(#bs)"/>
+</svg>

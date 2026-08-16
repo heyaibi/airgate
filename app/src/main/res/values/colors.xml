@@ -1,0 +1,4 @@
+<resources>
+    <!-- Launcher icon background — deep indigo to match the new brand accent -->
+    <color name="ic_launcher_background">#1E1B4B</color>
+</resources>

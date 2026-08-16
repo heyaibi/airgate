@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a problem with Airgate
+title: "[Bug]: "
+labels: ["bug"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Airgate is a security app — never include real PINs, keystore material, signing keys, or other secrets. Use synthetic data only.
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: A clear and concise description of what the bug is.
+      placeholder: What went wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: To reproduce
+      description: Steps to reproduce the behavior.
+      placeholder: |
+        1. Go to ...
+        2. Tap ...
+        3. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened. Paste the on-screen error message, if any.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Device model, Android version, Airgate version, and where you got the APK.
+      placeholder: |
+        - Device model:
+        - Android version:
+        - Airgate version:
+        - Source (debug APK / release build):
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else relevant — screenshots, a logcat excerpt, or whether it involves the Dhizuku / Device Owner interop layer or a wipe path.
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Confirmation
+      options:
+        - label: I confirm this report contains no real secret material.
+          required: true

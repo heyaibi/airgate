@@ -1,0 +1,12 @@
+.*
+!.gitignore
+!.github
+!.vscode
+!.editorconfig
+
+local.properties
+**/build/
+!buildSrc/src/**/build/
+*.iml
+logs
+issues/

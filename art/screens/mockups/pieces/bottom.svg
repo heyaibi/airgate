@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1116" height="76" viewBox="0 0 1116 76">
+  <!-- opaque chin bezel, rounded bottom corners only; solid body colour matching
+       all other pieces. Width equals the assembled body width (sw + 2*SIDE) so the
+       strip is never cropped: cropping the right side would cut the right corner
+       arc and make it look square. 6px taller than the visible bezel so its top
+       6px sits behind the screenshot and shows through the corner cutouts. -->
+  <path d="M 0 0 H 1116 V 20 A 56 56 0 0 1 1060 76 H 56 A 56 56 0 0 1 0 20 Z" fill="#1c1c1c"/>
+</svg>
