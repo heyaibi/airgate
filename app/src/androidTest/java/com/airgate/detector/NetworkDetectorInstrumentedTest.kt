@@ -36,6 +36,7 @@ import org.junit.runner.RunWith
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Framework-coupled tests for [NetworkDetector] on a real device/emulator:
@@ -256,6 +257,202 @@ class NetworkDetectorInstrumentedTest {
         detector.stopMonitoring()
         detector.stopMonitoring() // double-stop must be harmless
         detector.stopMonitoring() // stopping a never-started instance must be harmless too
+    }
+
+    @Test
+    fun successfulRegistration_isMarkedRegistered_andEnsureRegisteredIsANoop() {
+        val listener = RecordingListener()
+        val detector = NetworkDetector(context, listener)
+
+        detector.startMonitoring()
+
+        assertTrue("a successful start must mark the callback registered", detector.isRegistered())
+
+        repeat(3) { detector.ensureRegistered() }
+
+        assertTrue("ensureRegistered must not drop a healthy registration", detector.isRegistered())
+        assertTrue(
+            "a healthy registration must not produce any breach",
+            listener.breaches.none { it.violationType == ViolationType.MONITOR_REGISTRATION_FAILED }
+        )
+
+        detector.stopMonitoring()
+        assertFalse("stop must clear the registered state", detector.isRegistered())
+    }
+
+    @Test
+    fun failingRegistration_escalatesAfterAMinute_andRetriesWithBackoff() {
+        var fakeNow = 0L
+        val attemptTimes = mutableListOf<Long>()
+        var keepFailing = true
+        val events = mutableListOf<Pair<Long, BreachEvent>>()
+        val listener = object : SignalListener {
+            override fun onBreachDetected(event: BreachEvent) {
+                synchronized(events) {
+                    events += fakeNow to event
+                }
+            }
+        }
+        val detector = NetworkDetector(
+            context,
+            listener,
+            nowMs = { fakeNow },
+            registrationAction = {
+                attemptTimes += fakeNow
+                if (keepFailing) throw SecurityException("simulated registration denial")
+            }
+        )
+
+        detector.startMonitoring()
+        assertFalse("a failed first attempt must leave the detector unregistered", detector.isRegistered())
+        assertEquals(listOf(0L), attemptTimes)
+
+        var now = 10_000L
+        while (now <= 660_000L) {
+            fakeNow = now
+            detector.ensureRegistered()
+            now += 10_000L
+        }
+
+        assertEquals(
+            "attempts at 0s, the fast retry at 10s, the slow retry at 70s and the 5-min retry at 370s",
+            listOf(0L, 10_000L, 70_000L, 370_000L),
+            attemptTimes
+        )
+        assertEquals(
+            "escalations at 60s and every five minutes while the outage persists",
+            listOf(60_000L, 360_000L, 660_000L),
+            synchronized(events) { events.map { it.first } }
+        )
+        synchronized(events) {
+            for ((_, breach) in events) {
+                assertEquals(ViolationType.MONITOR_REGISTRATION_FAILED, breach.violationType)
+                assertEquals(ResponseTier.ALARM_STREAK, breach.tier)
+                assertEquals("NETWORK_MONITOR", breach.rawMetadata["source"])
+                assertTrue(
+                    "the breach must carry the failure count",
+                    breach.rawMetadata["consecutiveFailures"]?.toIntOrNull()?.let { it > 0 } == true
+                )
+            }
+        }
+        assertFalse(detector.isRegistered())
+
+        // The outage ends; the next due attempt (t=670s) registers and the
+        // detector stays silent on all subsequent ticks.
+        keepFailing = false
+        fakeNow = 670_000L
+        detector.ensureRegistered()
+        assertTrue("a recovering registration must be picked up by the next due attempt", detector.isRegistered())
+
+        fakeNow = 1_000_000L
+        detector.ensureRegistered()
+        assertEquals("no escalation may fire after recovery", 3, synchronized(events) { events.size })
+
+        detector.stopMonitoring()
+    }
+
+    @Test
+    fun stopMonitoring_isTerminal_noRegistrationAttemptCanResurrectTheDetector() {
+        var fakeNow = 0L
+        var attempts = 0
+        val detector = NetworkDetector(
+            context,
+            RecordingListener(),
+            nowMs = { fakeNow },
+            registrationAction = {
+                attempts++
+                throw SecurityException("simulated registration denial")
+            }
+        )
+
+        detector.startMonitoring()
+        assertEquals(1, attempts)
+        detector.stopMonitoring()
+
+        fakeNow = 600_000L
+        detector.ensureRegistered()
+        detector.ensureRegistered()
+        detector.startMonitoring()
+
+        assertEquals("no registration attempt may happen after teardown", 1, attempts)
+        assertFalse(detector.isRegistered())
+    }
+
+    @Test
+    fun registrationCompletingDuringTeardown_isReleasedNotMarkedRegistered() {
+        // The race this pins: the audit thread's attempt is mid-flight (blocked
+        // inside the framework call) when stopMonitoring runs on the main thread.
+        // When the attempt then completes successfully, it must NOT resurrect the
+        // registered state — the just-registered callback is released instead, so
+        // teardown can never leak a registration into a torn-down detector.
+        val inFlight = CountDownLatch(1)
+        val attempts = AtomicInteger(0)
+        val detector = NetworkDetector(
+            context,
+            RecordingListener(),
+            registrationAction = {
+                attempts.incrementAndGet()
+                try {
+                    inFlight.await(5, TimeUnit.SECONDS)
+                } catch (_: InterruptedException) {
+                    // fall through and let the attempt complete
+                }
+            }
+        )
+
+        val auditThread = Thread {
+            detector.ensureRegistered()
+        }
+        auditThread.start()
+        waitUntil(5_000) { attempts.get() == 1 }
+
+        detector.stopMonitoring()
+        inFlight.countDown()
+        auditThread.join(5_000)
+
+        assertFalse(
+            "a registration completing after teardown must not mark the detector registered",
+            detector.isRegistered()
+        )
+    }
+
+    @Test
+    fun ensureRegistered_onHealthyRegistration_neverReRegisters() {
+        var fakeNow = 0L
+        var registrationCalls = 0
+        val detector = NetworkDetector(
+            context,
+            RecordingListener(),
+            nowMs = { fakeNow },
+            registrationAction = { registrationCalls++ }
+        )
+
+        detector.startMonitoring()
+        assertEquals(1, registrationCalls)
+        assertTrue(detector.isRegistered())
+
+        repeat(5) {
+            fakeNow += 10_000L
+            detector.ensureRegistered()
+        }
+
+        assertEquals(
+            "a healthy registration must never be re-registered by the audit tick",
+            1,
+            registrationCalls
+        )
+        assertTrue(detector.isRegistered())
+
+        detector.stopMonitoring()
+    }
+
+    private fun waitUntil(timeoutMillis: Long, condition: () -> Boolean) {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMillis
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (condition()) return
+            SystemClock.sleep(50)
+        }
+        throw AssertionError("condition not met within ${timeoutMillis}ms")
     }
 
     @Test

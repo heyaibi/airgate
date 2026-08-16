@@ -49,7 +49,8 @@ enum class ViolationType(
     DEVELOPER_OPTIONS_TOGGLE(ScoringGroup.SYSTEM_TAMPER, ResponseTier.ALARM_STREAK, 1, "Developer options on"),
     SYSTEM_CLOCK_CHANGED(ScoringGroup.SYSTEM_TAMPER, ResponseTier.ALARM_STREAK, 1, "System clock changed"),
     SIM_STATE_CHANGED(ScoringGroup.SYSTEM_TAMPER, ResponseTier.ALARM_STREAK, 1, "SIM card changed or removed"),
-    DO_RESTRICTION_MISSING(ScoringGroup.SYSTEM_TAMPER, ResponseTier.ALARM_STREAK, 1, "Device Protection Bypassed")
+    DO_RESTRICTION_MISSING(ScoringGroup.SYSTEM_TAMPER, ResponseTier.ALARM_STREAK, 1, "Device Protection Bypassed"),
+    MONITOR_REGISTRATION_FAILED(ScoringGroup.SYSTEM_TAMPER, ResponseTier.ALARM_STREAK, 1, "Network monitor registration failed")
 }
 
 data class BreachEvent(

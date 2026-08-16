@@ -68,7 +68,7 @@ import com.airgate.ui.components.ViolationGuideItem
 import com.airgate.ui.components.ViolationGuideLegendCard
 
 /** Static catalogue of every detection, its trigger, and its alarm/point behavior. */
-private val guideItems: List<ViolationGuideInfo> = listOf(
+internal val guideItems: List<ViolationGuideInfo> = listOf(
     ViolationGuideInfo(
         violationType = ViolationType.WIFI_TRANSCEIVER_ENABLED,
         trigger = "The Wi-Fi transceiver is on \u2014 even with no network connected, with or without validated internet",
@@ -153,6 +153,13 @@ private val guideItems: List<ViolationGuideInfo> = listOf(
         alarmScreen = true,
         addsPoint = true,
         note = "Off by default \u2014 enable 'Device Protection Bypassed' alarms. Self-defense failures route straight to the wipe path."
+    ),
+    ViolationGuideInfo(
+        violationType = ViolationType.MONITOR_REGISTRATION_FAILED,
+        trigger = "the network monitor's connectivity listener cannot be registered for a full minute \u2014 the fast detection path is down",
+        alarmScreen = true,
+        addsPoint = true,
+        note = "Retries automatically with backoff; the 10-second radio polls keep running as a backstop."
     )
 )
 

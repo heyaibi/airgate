@@ -22,13 +22,42 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiManager
+import android.os.SystemClock
+import android.util.Log
 import com.airgate.domain.model.BreachEvent
 import com.airgate.domain.model.ViolationType
 import java.util.UUID
 
+/**
+ * Retry and escalation bookkeeping for the connectivity-listener registration.
+ *
+ * The network callback is the fast detection path; when it cannot be registered
+ * (a boot-time glitch, a permission problem, or the system's per-app callback
+ * cap), the detector must keep trying instead of staying dead for the service
+ * lifetime. This state drives that self-healing and the fail-loud escalation.
+ * Kept free of Android framework calls so every transition is JVM-testable.
+ */
+internal data class RegistrationState(
+    val registered: Boolean = false,
+    val consecutiveFailures: Int = 0,
+    val firstFailureAtMs: Long = -1L,
+    val lastEscalationAtMs: Long = -1L,
+    val nextAttemptAtMs: Long = 0L
+)
+
+/** One tick's decision: whether to attempt registration now and whether to escalate now. */
+internal data class RegistrationDecision(
+    val attemptRegistration: Boolean,
+    val escalate: Boolean
+)
+
 class NetworkDetector(
     private val context: Context,
-    private val listener: SignalListener
+    private val listener: SignalListener,
+    private val nowMs: () -> Long = { SystemClock.elapsedRealtime() },
+    private val logWarning: (String, Throwable) -> Unit =
+        { message, throwable -> Log.w(TAG, message, throwable) },
+    private val registrationAction: (() -> Unit)? = null
 ) {
     private val connectivityManager =
         context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -78,15 +107,28 @@ class NetworkDetector(
     private val radioLatchLock = Any()
     private var wifiRadioReported = false
 
+    // Registration state is mutated from both the main thread (startMonitoring /
+    // stopMonitoring) and the audit thread (ensureRegistered), so every mutation
+    // is guarded. The binder calls themselves happen outside the lock.
+    private val registrationLock = Any()
+    private var registrationState = RegistrationState()
+    @Volatile
+    private var tornDown = false
+
+    internal fun isRegistered(): Boolean = synchronized(registrationLock) {
+        registrationState.registered
+    }
+
+    /**
+     * Registers the connectivity callback. This is the initial attempt only;
+     * the periodic audit tick keeps the registration healthy via [ensureRegistered].
+     * A double-start on an already-registered instance is a no-op.
+     */
     fun startMonitoring() {
-        val request = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .build()
-        try {
-            connectivityManager.registerNetworkCallback(request, networkCallback)
-        } catch (e: Exception) {
-            // Log or handle permission exception if any
+        val shouldAttempt = synchronized(registrationLock) {
+            !tornDown && !registrationState.registered
         }
+        if (shouldAttempt) attemptRegistration()
     }
 
     fun stopMonitoring() {
@@ -95,6 +137,89 @@ class NetworkDetector(
         } catch (e: Exception) {
             // Ignore unregister errors
         }
+        synchronized(registrationLock) {
+            registrationState = RegistrationState()
+            tornDown = true
+        }
+    }
+
+    /**
+     * Keeps the registration healthy on the audit tick. While the callback is
+     * registered this is a no-op. While it is not, this re-attempts registration
+     * once the backoff window has elapsed and, once the failure has persisted for
+     * a full minute, raises a [ViolationType.MONITOR_REGISTRATION_FAILED] breach
+     * so a dead fast path is never silent — the same fail-closed posture the
+     * tamper circuits use. Escalation re-fires at most once per re-escalation
+     * interval while the failure persists.
+     */
+    fun ensureRegistered() {
+        var escalate = false
+        var attempt = false
+        var failures = 0
+        val now = nowMs()
+        synchronized(registrationLock) {
+            if (tornDown) return
+            val decision = resolveRegistrationTick(registrationState, now)
+            if (decision.escalate) {
+                registrationState = markEscalated(registrationState, now)
+                escalate = true
+            }
+            attempt = decision.attemptRegistration
+            failures = registrationState.consecutiveFailures
+        }
+        if (escalate) {
+            listener.onBreachDetected(registrationFailureBreach(failures))
+        }
+        if (attempt) attemptRegistration()
+    }
+
+    private fun attemptRegistration() {
+        // Best-effort cleanup: a previous attempt may have half-registered the
+        // callback before failing, and the retry cycle must never leak
+        // registrations (or trip the double-register IllegalArgumentException).
+        try {
+            connectivityManager.unregisterNetworkCallback(networkCallback)
+        } catch (e: Exception) {
+            // Nothing was registered yet — the expected case on a first attempt.
+        }
+        try {
+            performRegistration()
+            var releaseAfterTeardown = false
+            synchronized(registrationLock) {
+                if (tornDown) {
+                    // The service is tearing down while this attempt was in
+                    // flight; the callback just registered must be released, not
+                    // leaked until process death.
+                    releaseAfterTeardown = true
+                } else {
+                    registrationState = onRegistrationSucceeded(registrationState)
+                }
+            }
+            if (releaseAfterTeardown) {
+                try {
+                    connectivityManager.unregisterNetworkCallback(networkCallback)
+                } catch (e: Exception) {
+                    // Ignore unregister errors
+                }
+            }
+        } catch (e: Exception) {
+            logWarning("Network callback registration failed; a retry is scheduled", e)
+            synchronized(registrationLock) {
+                registrationState = onRegistrationFailed(registrationState, nowMs())
+            }
+        }
+    }
+
+    private fun performRegistration() {
+        val action = registrationAction
+        if (action != null) {
+            action()
+            return
+        }
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        connectivityManager.registerNetworkCallback(request, networkCallback)
     }
 
     /**
@@ -131,6 +256,98 @@ class NetworkDetector(
     }
 
     companion object {
+        private const val TAG = "NetworkDetector"
+
+        /** Backoff after the first failed attempt (one audit tick). */
+        internal const val REGISTRATION_RETRY_FAST_MS = 10_000L
+        /** Backoff after the second failed attempt. */
+        internal const val REGISTRATION_RETRY_SLOW_MS = 60_000L
+        /** Backoff cap for every attempt after the second (5 minutes). */
+        internal const val REGISTRATION_RETRY_MAX_MS = 300_000L
+        /** A registration failure that persists this long is escalated. */
+        internal const val REGISTRATION_ESCALATION_AFTER_MS = 60_000L
+        /** Escalation re-fires at most this often while the failure persists. */
+        internal const val REGISTRATION_REESCALATION_INTERVAL_MS = 300_000L
+
+        /**
+         * Backoff delay after [consecutiveFailures] consecutive failed attempts:
+         * fast (one tick) for the first, slow (a minute) for the second, capped
+         * at five minutes thereafter so a long outage re-checks every five
+         * minutes without hammering ConnectivityService.
+         */
+        internal fun registrationBackoffDelayMs(consecutiveFailures: Int): Long = when {
+            consecutiveFailures <= 1 -> REGISTRATION_RETRY_FAST_MS
+            consecutiveFailures == 2 -> REGISTRATION_RETRY_SLOW_MS
+            else -> REGISTRATION_RETRY_MAX_MS
+        }
+
+        /**
+         * Pure decision logic for one audit tick while the callback is
+         * unregistered. A registered (or torn-down) state never attempts and
+         * never escalates. Escalation fires only after the failure span has
+         * reached [REGISTRATION_ESCALATION_AFTER_MS] and at most once per
+         * [REGISTRATION_REESCALATION_INTERVAL_MS] afterwards, so a persistent
+         * failure is loud but never floods. Free of Android framework calls so
+         * every branch is unit-testable.
+         */
+        internal fun resolveRegistrationTick(
+            state: RegistrationState,
+            nowMs: Long
+        ): RegistrationDecision {
+            if (state.registered) return RegistrationDecision(attemptRegistration = false, escalate = false)
+            val failureSpanMs = if (state.firstFailureAtMs < 0L) 0L else nowMs - state.firstFailureAtMs
+            val dueToEscalate = state.firstFailureAtMs >= 0L &&
+                failureSpanMs >= REGISTRATION_ESCALATION_AFTER_MS &&
+                (state.lastEscalationAtMs < 0L ||
+                    nowMs - state.lastEscalationAtMs >= REGISTRATION_REESCALATION_INTERVAL_MS)
+            return RegistrationDecision(
+                attemptRegistration = nowMs >= state.nextAttemptAtMs,
+                escalate = dueToEscalate
+            )
+        }
+
+        /**
+         * Records a successful registration: the failure streak is fully reset
+         * and the detector is healthy again. Idempotent on an already-registered
+         * state.
+         */
+        internal fun onRegistrationSucceeded(state: RegistrationState): RegistrationState =
+            if (state.registered) state else RegistrationState(registered = true)
+
+        /**
+         * Records a failed attempt: increments the consecutive-failure count,
+         * latches the first-failure timestamp (so the escalation span counts
+         * from the start of the outage, not from each retry), and schedules the
+         * next attempt on the backoff schedule.
+         */
+        internal fun onRegistrationFailed(state: RegistrationState, nowMs: Long): RegistrationState {
+            val failures = state.consecutiveFailures + 1
+            return RegistrationState(
+                registered = false,
+                consecutiveFailures = failures,
+                firstFailureAtMs = if (state.firstFailureAtMs >= 0L) state.firstFailureAtMs else nowMs,
+                lastEscalationAtMs = state.lastEscalationAtMs,
+                nextAttemptAtMs = nowMs + registrationBackoffDelayMs(failures)
+            )
+        }
+
+        /** Records that an escalation breach was raised at [nowMs]. */
+        internal fun markEscalated(state: RegistrationState, nowMs: Long): RegistrationState =
+            state.copy(lastEscalationAtMs = nowMs)
+
+        /**
+         * Builds the escalation breach so its metadata is testable on the JVM.
+         * Rides the standard detector-to-engine breach path (alarm + SYSTEM_TAMPER
+         * scoring point) so a dead fast path is visible in the audit log and
+         * Security Activity, exactly like any other violation.
+         */
+        internal fun registrationFailureBreach(consecutiveFailures: Int): BreachEvent = breachOf(
+            ViolationType.MONITOR_REGISTRATION_FAILED,
+            rawMetadata = mapOf(
+                "source" to "NETWORK_MONITOR",
+                "consecutiveFailures" to consecutiveFailures.toString()
+            )
+        )
 
         /**
          * Outcome of one radio-state observation for either mechanism: whether a

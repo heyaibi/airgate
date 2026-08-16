@@ -87,6 +87,7 @@ class WatchdogService : Service(), SignalListener {
     private val auditRunnable = object : Runnable {
         override fun run() {
             AuditLoop.tick(
+                ensureNetworkRegistration = { networkDetector.ensureRegistered() },
                 checkWifiRadioState = { networkDetector.checkWifiRadioState() },
                 checkRadioState = { radioStateDetector.checkRadioState() },
                 checkSettingsState = { systemSettingsDetector.checkSettingsState() },

@@ -6,8 +6,8 @@
 
 ### Monitoring
 
-- **13 violation signals** across three scoring groups — Wireless, USB, and System Tamper — each with its own trigger, response tier, and alarm/point behavior (see the [violation matrix](#violation-matrix) below).
-- **Always-on watchdog** — a foreground service (`WatchdogService`) drives four detectors (network, radio state, USB, system settings). Most events are caught instantly by system broadcasts (airplane-mode flips, USB attach, time/SIM changes); the rest are audited by a 10-second background poll, which also reads the live Bluetooth and airplane-mode state so a radio that was already on (or airplane mode already off) when monitoring started is still detected.
+- **14 violation signals** across three scoring groups — Wireless, USB, and System Tamper — each with its own trigger, response tier, and alarm/point behavior (see the [violation matrix](#violation-matrix) below).
+- **Always-on watchdog** — a foreground service (`WatchdogService`) drives four detectors (network, radio state, USB, system settings). Most events are caught instantly by system broadcasts (airplane-mode flips, USB attach, time/SIM changes); the rest are audited by a 10-second background poll, which also reads the live Bluetooth and airplane-mode state so a radio that was already on (or airplane mode already off) when monitoring started is still detected. The network detector's connectivity listener self-heals: if it cannot register, the audit tick retries with backoff and raises a `MONITOR_REGISTRATION_FAILED` violation instead of failing silently.
 - **Survives process death** — a 15-minute AlarmManager safety-net re-runs the full posture audit even if the service is killed.
 
 ### Threat scoring & response
@@ -48,7 +48,7 @@ Regenerate them with `make screens`, `make screens-dark`, and `make mockups` (th
 
 - **Zero Network Purity:** 100% offline application. `android.permission.INTERNET` is explicitly omitted from `AndroidManifest.xml`.
 - **Dhizuku Device Owner Interop:** Executes privileged policy enforcement (`DevicePolicyManager`) via Binder calls without requiring factory resets.
-- **Weighted Tiered Accounting:** Monitors 13 multi-vector signals (Wi-Fi transceiver, validated network, airplane mode, Bluetooth, USB tethering / host-link / data function, ADB, OTG ethernet, developer options, system clock skew, SIM state, device-protection loss) and maintains persistent threat streaks against configurable wipe thresholds.
+- **Weighted Tiered Accounting:** Monitors 14 multi-vector signals (Wi-Fi transceiver, validated network, airplane mode, Bluetooth, USB tethering / host-link / data function, ADB, OTG ethernet, developer options, system clock skew, SIM state, device-protection loss, monitor registration health) and maintains persistent threat streaks against configurable wipe thresholds.
 - **Self-Defense Audit:** Periodically checks DO status and package signature integrity.
 - **Dry-Run Harness:** Offline simulation mode for safe dry-run testing of threat triggers without destructive system resets.
 - **Notification-Gated Arming:** The watchdog can only be *newly* enabled while the Armed PIN is usable, the app can post notifications, and Bluetooth state can be read, so a device whose alarm path could be entirely silent or whose Bluetooth detection is blind is never armed.
@@ -85,6 +85,7 @@ Every monitored condition, its trigger, response tier, whether it shows the full
 | System clock changed | The system clock moves beyond the clock-skew tolerance (default 5 minutes) | ALARM_STREAK | ✓ | ✓ | |
 | SIM state changed | A SIM card is present on a slot | ALARM_STREAK | ✓ | ✓ | |
 | Device protection bypassed | A device-protection restriction is missing or self-defense fails | ALARM_STREAK | ✓ | ✓ | Off by default — enable "Device Protection Bypassed" alarms; self-defense failures route straight to the wipe path |
+| Monitor registration failed | The network monitor's connectivity listener cannot be registered for a full minute — the fast detection path is down | ALARM_STREAK | ✓ | ✓ | Self-heals — retried with backoff every audit tick; the radio polls remain as a backstop |
 
 ### How scoring works
 

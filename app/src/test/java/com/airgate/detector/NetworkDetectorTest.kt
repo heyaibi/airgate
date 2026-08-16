@@ -738,6 +738,259 @@ class NetworkDetectorTest {
         rawMetadata = rawMetadata
     )
 
+    // --- Registration retry / escalation state machine ---
+
+    @Test
+    fun `backoff schedule is fast then slow then capped`() {
+        assertEquals(10_000L, NetworkDetector.registrationBackoffDelayMs(1))
+        assertEquals(60_000L, NetworkDetector.registrationBackoffDelayMs(2))
+        assertEquals(300_000L, NetworkDetector.registrationBackoffDelayMs(3))
+        assertEquals(300_000L, NetworkDetector.registrationBackoffDelayMs(4))
+        assertEquals(300_000L, NetworkDetector.registrationBackoffDelayMs(100))
+    }
+
+    @Test
+    fun `first failure latches the streak start and schedules the fast retry`() {
+        val state = NetworkDetector.onRegistrationFailed(RegistrationState(), nowMs = 1_000L)
+
+        assertFalse(state.registered)
+        assertEquals(1, state.consecutiveFailures)
+        assertEquals("the failure span counts from the first failure", 1_000L, state.firstFailureAtMs)
+        assertEquals(11_000L, state.nextAttemptAtMs)
+    }
+
+    @Test
+    fun `subsequent failures keep the original first-failure timestamp`() {
+        var state = NetworkDetector.onRegistrationFailed(RegistrationState(), nowMs = 1_000L)
+        state = NetworkDetector.onRegistrationFailed(state, nowMs = 11_000L)
+
+        assertEquals(2, state.consecutiveFailures)
+        assertEquals("the span still counts from the first failure", 1_000L, state.firstFailureAtMs)
+        assertEquals(71_000L, state.nextAttemptAtMs)
+    }
+
+    @Test
+    fun `the third and later failures cap the retry window at five minutes`() {
+        var state = NetworkDetector.onRegistrationFailed(RegistrationState(), nowMs = 0L)
+        state = NetworkDetector.onRegistrationFailed(state, nowMs = 10_000L)
+        state = NetworkDetector.onRegistrationFailed(state, nowMs = 70_000L)
+
+        assertEquals(3, state.consecutiveFailures)
+        assertEquals(370_000L, state.nextAttemptAtMs)
+
+        state = NetworkDetector.onRegistrationFailed(state, nowMs = 370_000L)
+        assertEquals(4, state.consecutiveFailures)
+        assertEquals(670_000L, state.nextAttemptAtMs)
+    }
+
+    @Test
+    fun `a successful registration fully resets the failure streak`() {
+        var state = NetworkDetector.onRegistrationFailed(RegistrationState(), nowMs = 0L)
+        state = NetworkDetector.onRegistrationFailed(state, nowMs = 10_000L)
+        state = NetworkDetector.markEscalated(state, 60_000L)
+
+        val recovered = NetworkDetector.onRegistrationSucceeded(state)
+
+        assertTrue(recovered.registered)
+        assertEquals(0, recovered.consecutiveFailures)
+        assertEquals(-1L, recovered.firstFailureAtMs)
+        assertEquals(-1L, recovered.lastEscalationAtMs)
+        assertEquals(0L, recovered.nextAttemptAtMs)
+    }
+
+    @Test
+    fun `success on an already-registered state is idempotent`() {
+        val registered = NetworkDetector.onRegistrationSucceeded(RegistrationState())
+        val again = NetworkDetector.onRegistrationSucceeded(registered)
+
+        assertEquals(registered, again)
+    }
+
+    @Test
+    fun `a registered state never attempts and never escalates`() {
+        val state = RegistrationState(registered = true, nextAttemptAtMs = 0L)
+
+        val decision = NetworkDetector.resolveRegistrationTick(state, nowMs = Long.MAX_VALUE)
+
+        assertFalse(decision.attemptRegistration)
+        assertFalse(decision.escalate)
+    }
+
+    @Test
+    fun `no escalation fires before a failure is recorded`() {
+        val decision = NetworkDetector.resolveRegistrationTick(RegistrationState(), nowMs = 500_000L)
+
+        assertFalse("an unregistered-but-never-failed detector must not escalate", decision.escalate)
+        assertTrue("the initial attempt is due immediately", decision.attemptRegistration)
+    }
+
+    @Test
+    fun `no escalation fires before the failure span reaches one minute`() {
+        val state = NetworkDetector.onRegistrationFailed(RegistrationState(), nowMs = 0L)
+
+        val before = NetworkDetector.resolveRegistrationTick(state, nowMs = 59_999L)
+        assertFalse(before.escalate)
+
+        val atThreshold = NetworkDetector.resolveRegistrationTick(state, nowMs = 60_000L)
+        assertTrue(atThreshold.escalate)
+    }
+
+    @Test
+    fun `escalation does not re-fire within the re-escalation interval`() {
+        var state = NetworkDetector.onRegistrationFailed(RegistrationState(), nowMs = 0L)
+        state = NetworkDetector.markEscalated(state, 60_000L)
+
+        val justBefore = NetworkDetector.resolveRegistrationTick(state, nowMs = 359_999L)
+        assertFalse("must not re-fire before the re-escalation interval elapses", justBefore.escalate)
+
+        val atInterval = NetworkDetector.resolveRegistrationTick(state, nowMs = 360_000L)
+        assertTrue(atInterval.escalate)
+    }
+
+    @Test
+    fun `markEscalated only moves the escalation timestamp`() {
+        val state = NetworkDetector.onRegistrationFailed(RegistrationState(), nowMs = 0L)
+        val escalated = NetworkDetector.markEscalated(state, 60_000L)
+
+        assertEquals(60_000L, escalated.lastEscalationAtMs)
+        assertEquals("all other fields are untouched", state.consecutiveFailures, escalated.consecutiveFailures)
+        assertEquals(state.firstFailureAtMs, escalated.firstFailureAtMs)
+        assertEquals(state.nextAttemptAtMs, escalated.nextAttemptAtMs)
+        assertFalse(escalated.registered)
+    }
+
+    @Test
+    fun `an attempt is due exactly when the backoff deadline has elapsed`() {
+        val state = NetworkDetector.onRegistrationFailed(RegistrationState(), nowMs = 10_000L)
+        // first failure -> next attempt at 20_000L
+
+        assertFalse(NetworkDetector.resolveRegistrationTick(state, 19_999L).attemptRegistration)
+        assertTrue(NetworkDetector.resolveRegistrationTick(state, 20_000L).attemptRegistration)
+    }
+
+    @Test
+    fun `full timeline - persistent failure retries with backoff and escalates periodically`() {
+        // startMonitoring fails at t=0, then every attempt keeps failing. Ticks are
+        // 10s apart, mirroring the audit loop. Expected attempts at 0s/10s/70s/370s/670s
+        // (fast, then the slow minute, then every five minutes) and escalations at
+        // 60s and every five minutes thereafter.
+        var state = NetworkDetector.onRegistrationFailed(RegistrationState(), nowMs = 0L)
+        val attempts = mutableListOf(0L)
+        val escalations = mutableListOf<Long>()
+
+        var now = 0L
+        while (now < 720_000L) {
+            now += 10_000L
+            val decision = NetworkDetector.resolveRegistrationTick(state, now)
+            if (decision.escalate) {
+                escalations += now
+                state = NetworkDetector.markEscalated(state, now)
+            }
+            if (decision.attemptRegistration) {
+                attempts += now
+                state = NetworkDetector.onRegistrationFailed(state, now)
+            }
+        }
+
+        assertEquals(listOf(0L, 10_000L, 70_000L, 370_000L, 670_000L), attempts)
+        assertEquals(listOf(60_000L, 360_000L, 660_000L), escalations)
+    }
+
+    @Test
+    fun `recovery stops escalation and no further attempts happen once registered`() {
+        // Fails for 70s (one escalation at 60s), then recovers at t=70s.
+        var state = NetworkDetector.onRegistrationFailed(RegistrationState(), nowMs = 0L)
+        val attempts = mutableListOf(0L)
+        val escalations = mutableListOf<Long>()
+        var recoveredAt: Long? = null
+
+        var now = 0L
+        while (now < 300_000L) {
+            now += 10_000L
+            val decision = NetworkDetector.resolveRegistrationTick(state, now)
+            if (decision.escalate) {
+                escalations += now
+                state = NetworkDetector.markEscalated(state, now)
+            }
+            if (decision.attemptRegistration) {
+                attempts += now
+                if (now == 70_000L) {
+                    state = NetworkDetector.onRegistrationSucceeded(state)
+                    recoveredAt = now
+                } else {
+                    state = NetworkDetector.onRegistrationFailed(state, now)
+                }
+            }
+        }
+
+        assertEquals(70_000L, recoveredAt)
+        assertEquals(listOf(0L, 10_000L, 70_000L), attempts)
+        assertEquals(listOf(60_000L), escalations)
+    }
+
+    @Test
+    fun `exhaustive decision table over failure span and escalation cadence`() {
+        // A registered state is a hard no-op regardless of timestamps.
+        val registered = NetworkDetector.resolveRegistrationTick(
+            RegistrationState(registered = true), nowMs = 500_000L
+        )
+        assertFalse(registered.attemptRegistration)
+        assertFalse(registered.escalate)
+
+        // No recorded failure: escalate is always false; attempt is time-gated.
+        for (now in listOf(-1L, 0L, 9_999L, 10_000L, Long.MAX_VALUE)) {
+            val decision = NetworkDetector.resolveRegistrationTick(RegistrationState(), now)
+            assertFalse("no failure recorded must never escalate (now=$now)", decision.escalate)
+            assertEquals("attempt is due once nowMs reaches nextAttemptAtMs (now=$now)", now >= 0L, decision.attemptRegistration)
+        }
+
+        // Failure streak with a first failure at 0: escalation flips at 60s and
+        // 60s after each escalation; attempt follows the backoff deadline.
+        for (lastEscalation in listOf(-1L, 0L, 60_000L, 360_000L)) {
+            val base = RegistrationState(
+                registered = false,
+                consecutiveFailures = 4,
+                firstFailureAtMs = 0L,
+                lastEscalationAtMs = lastEscalation,
+                nextAttemptAtMs = 370_000L
+            )
+            val decisions = mutableListOf<Pair<Long, RegistrationDecision>>()
+            for (now in 0L..660_000L step 30_000L) {
+                decisions += now to NetworkDetector.resolveRegistrationTick(base, now)
+            }
+            for ((now, decision) in decisions) {
+                val message = "lastEscalation=$lastEscalation now=$now"
+                val expectedAttempt = now >= 370_000L
+                assertEquals(message, expectedAttempt, decision.attemptRegistration)
+                val span = now - 0L
+                val sinceLast = if (lastEscalation < 0L) Long.MAX_VALUE else now - lastEscalation
+                val expectedEscalate = span >= 60_000L && sinceLast >= 300_000L
+                assertEquals(message, expectedEscalate, decision.escalate)
+            }
+        }
+    }
+
+    @Test
+    fun `registration failure breach is alarm-streak in the system tamper group`() {
+        val breach = NetworkDetector.registrationFailureBreach(consecutiveFailures = 3)
+
+        assertEquals(ViolationType.MONITOR_REGISTRATION_FAILED, breach.violationType)
+        assertEquals(ResponseTier.ALARM_STREAK, breach.tier)
+        assertEquals(ScoringGroup.SYSTEM_TAMPER, breach.violationType.scoringGroup)
+        assertEquals(1, breach.weight)
+        assertEquals("NETWORK_MONITOR", breach.rawMetadata["source"])
+        assertEquals("3", breach.rawMetadata["consecutiveFailures"])
+    }
+
+    @Test
+    fun `registration failure breach carries a unique id and a timestamp`() {
+        val first = NetworkDetector.registrationFailureBreach(1)
+        val second = NetworkDetector.registrationFailureBreach(2)
+
+        assertTrue("each failure breach must carry a unique id", first.id != second.id)
+        assertTrue("each failure breach must carry a timestamp", first.timestamp > 0L)
+    }
+
     private companion object {
         val BOOLS: List<Boolean> = listOf(false, true)
 

@@ -22,17 +22,19 @@ import org.junit.Test
 
 /**
  * Composition tests for the periodic audit tick. These pin the contract that
- * the Wi-Fi radio-state poll and the Bluetooth/airplane radio-state poll are
- * first-class members of every audit loop tick (alongside the settings poll and
- * the tamper check), and that a failing step never blocks the rest of the tick.
+ * network-registration re-arm and the Wi-Fi radio-state poll and the
+ * Bluetooth/airplane radio-state poll are first-class members of every audit
+ * loop tick (alongside the settings poll and the tamper check), and that a
+ * failing step never blocks the rest of the tick.
  */
 class AuditLoopTest {
 
     @Test
-    fun `one tick runs the wifi poll, radio poll, settings poll and tamper check in order`() {
+    fun `one tick runs registration, wifi poll, radio poll, settings poll and tamper check in order`() {
         val order = mutableListOf<String>()
 
         AuditLoop.tick(
+            ensureNetworkRegistration = { order += "registration" },
             checkWifiRadioState = { order += "wifi" },
             checkRadioState = { order += "radio" },
             checkSettingsState = { order += "settings" },
@@ -40,7 +42,26 @@ class AuditLoopTest {
         )
 
         assertEquals(
-            listOf("wifi", "radio", "settings", "tamper"),
+            listOf("registration", "wifi", "radio", "settings", "tamper"),
+            order
+        )
+    }
+
+    @Test
+    fun `a throwing registration step does not block the wifi poll, radio poll, settings poll or tamper check`() {
+        val order = mutableListOf<String>()
+
+        AuditLoop.tick(
+            ensureNetworkRegistration = { order += "registration"; throw RuntimeException("register failed") },
+            checkWifiRadioState = { order += "wifi" },
+            checkRadioState = { order += "radio" },
+            checkSettingsState = { order += "settings" },
+            checkTamperOnly = { order += "tamper"; true }
+        )
+
+        assertEquals(
+            "a failing registration step must not take down the remaining steps",
+            listOf("registration", "wifi", "radio", "settings", "tamper"),
             order
         )
     }
@@ -50,6 +71,7 @@ class AuditLoopTest {
         val order = mutableListOf<String>()
 
         AuditLoop.tick(
+            ensureNetworkRegistration = { order += "registration" },
             checkWifiRadioState = { order += "wifi"; throw RuntimeException("wifi read failed") },
             checkRadioState = { order += "radio" },
             checkSettingsState = { order += "settings" },
@@ -58,7 +80,7 @@ class AuditLoopTest {
 
         assertEquals(
             "a failing wifi poll must not take down the radio/settings polls and tamper check",
-            listOf("wifi", "radio", "settings", "tamper"),
+            listOf("registration", "wifi", "radio", "settings", "tamper"),
             order
         )
     }
@@ -68,6 +90,7 @@ class AuditLoopTest {
         val order = mutableListOf<String>()
 
         AuditLoop.tick(
+            ensureNetworkRegistration = { order += "registration" },
             checkWifiRadioState = { order += "wifi" },
             checkRadioState = { order += "radio"; throw RuntimeException("radio read failed") },
             checkSettingsState = { order += "settings" },
@@ -76,7 +99,7 @@ class AuditLoopTest {
 
         assertEquals(
             "a failing radio poll must not take down the settings poll and tamper check",
-            listOf("wifi", "radio", "settings", "tamper"),
+            listOf("registration", "wifi", "radio", "settings", "tamper"),
             order
         )
     }
@@ -86,19 +109,21 @@ class AuditLoopTest {
         val order = mutableListOf<String>()
 
         AuditLoop.tick(
+            ensureNetworkRegistration = { order += "registration" },
             checkWifiRadioState = { order += "wifi" },
             checkRadioState = { order += "radio" },
             checkSettingsState = { order += "settings"; throw RuntimeException("settings read failed") },
             checkTamperOnly = { order += "tamper"; true }
         )
 
-        assertEquals(listOf("wifi", "radio", "settings", "tamper"), order)
+        assertEquals(listOf("registration", "wifi", "radio", "settings", "tamper"), order)
     }
 
     @Test
     fun `a throwing tamper check is swallowed and the tick returns`() {
         var tamperRan = false
         AuditLoop.tick(
+            ensureNetworkRegistration = {},
             checkWifiRadioState = {},
             checkRadioState = {},
             checkSettingsState = {},
@@ -116,6 +141,7 @@ class AuditLoopTest {
         val order = mutableListOf<String>()
 
         AuditLoop.tick(
+            ensureNetworkRegistration = { order += "registration"; throw AssertionError("register failed hard") },
             checkWifiRadioState = { order += "wifi"; throw AssertionError("hard failure") },
             checkRadioState = { order += "radio" },
             checkSettingsState = { order += "settings" },
@@ -123,8 +149,8 @@ class AuditLoopTest {
         )
 
         assertEquals(
-            "a failing wifi poll throwing an Error must not take down the remaining steps",
-            listOf("wifi", "radio", "settings", "tamper"),
+            "a failing step throwing an Error must not take down the remaining steps",
+            listOf("registration", "wifi", "radio", "settings", "tamper"),
             order
         )
     }
@@ -133,6 +159,7 @@ class AuditLoopTest {
     fun `an Error from every step is swallowed and the tick still returns normally`() {
         // Even in the worst case the tick must return so the caller re-arms.
         AuditLoop.tick(
+            ensureNetworkRegistration = { throw AssertionError("registration") },
             checkWifiRadioState = { throw AssertionError("wifi") },
             checkRadioState = { throw AssertionError("radio") },
             checkSettingsState = { throw AssertionError("settings") },
@@ -142,6 +169,7 @@ class AuditLoopTest {
 
     @Test
     fun `each step runs exactly once per tick`() {
+        var registrationCount = 0
         var wifiCount = 0
         var radioCount = 0
         var settingsCount = 0
@@ -149,6 +177,7 @@ class AuditLoopTest {
 
         fun runTick() {
             AuditLoop.tick(
+                ensureNetworkRegistration = { registrationCount++ },
                 checkWifiRadioState = { wifiCount++ },
                 checkRadioState = { radioCount++ },
                 checkSettingsState = { settingsCount++ },
@@ -158,6 +187,7 @@ class AuditLoopTest {
         runTick()
         runTick()
 
+        assertEquals(2, registrationCount)
         assertEquals(2, wifiCount)
         assertEquals(2, radioCount)
         assertEquals(2, settingsCount)

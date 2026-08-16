@@ -19,24 +19,26 @@ package com.airgate.service
 /**
  * The composition of one periodic audit tick: which monitors run every cycle.
  *
- * [tick] runs the Wi-Fi radio-state poll, the Bluetooth/airplane radio-state
- * poll, the system-settings poll, and the tamper-only check, in that order.
- * Every step is isolated so a failing monitor — including one that throws an
- * [Error] rather than an [Exception] — never takes the rest of the tick down:
- * a flaky Wi-Fi read must not starve the settings poll, and neither may starve
- * the security-critical tamper check. Kept framework-free and unit-testable so
- * the loop's composition is pinned by tests instead of living only inside a
- * service's anonymous runnable. Rescheduling (the interval between ticks)
- * belongs to the caller; this object runs a single tick and always returns
- * normally.
+ * [tick] re-arms the network-callback registration, then runs the Wi-Fi
+ * radio-state poll, the Bluetooth/airplane radio-state poll, the system-settings
+ * poll, and the tamper-only check, in that order. Every step is isolated so a
+ * failing monitor — including one that throws an [Error] rather than an
+ * [Exception] — never takes the rest of the tick down: a flaky Wi-Fi read must
+ * not starve the settings poll, and neither may starve the security-critical
+ * tamper check. Kept framework-free and unit-testable so the loop's composition
+ * is pinned by tests instead of living only inside a service's anonymous
+ * runnable. Rescheduling (the interval between ticks) belongs to the caller;
+ * this object runs a single tick and always returns normally.
  */
 internal object AuditLoop {
     fun tick(
+        ensureNetworkRegistration: () -> Unit,
         checkWifiRadioState: () -> Unit,
         checkRadioState: () -> Unit,
         checkSettingsState: () -> Unit,
         checkTamperOnly: () -> Boolean
     ) {
+        runIsolated { ensureNetworkRegistration() }
         runIsolated { checkWifiRadioState() }
         runIsolated { checkRadioState() }
         runIsolated { checkSettingsState() }

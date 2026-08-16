@@ -81,7 +81,7 @@ One entry is special: **Wi-Fi transceiver enabled** is **LOG_ONLY** — it appea
 
 The other Guide tab explains the *defence* side of the shield, as opposed to the *detection* catalogue. It shows the four defense layers and how many are currently active:
 
-- **Network & Connectivity** — monitors real-time path attempts (Wi-Fi, mobile data, VPN, ethernet) so nothing can exfiltrate.
+- **Network & Connectivity** — monitors real-time path attempts (Wi-Fi, mobile data, VPN, ethernet) so nothing can exfiltrate. If the monitor's own connectivity listener cannot be registered, it retries automatically with backoff and raises a "Network monitor registration failed" violation instead of failing silently — detection never quietly goes dark.
 - **Wireless Transceiver Blockade** — enforces airplane mode and shuts down Wi-Fi, Bluetooth, NFC, and FM radio.
 - **USB & ADB Prevention** — blocks USB data transfers and ADB debugging so nothing can be pulled off by cable.
 - **Self-Defense Audit** — verifies Device Owner authority and pins the app's own signature.
