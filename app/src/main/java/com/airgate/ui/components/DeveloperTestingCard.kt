@@ -27,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -34,6 +35,9 @@ import androidx.compose.ui.unit.sp
 import com.airgate.data.repository.SecurityStateRepository
 import com.airgate.domain.model.AppConfig
 import com.airgate.testing.DryRunHarness
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Developer & Offline Testing card: the dry-run switch (gated behind a confirmation
@@ -77,12 +81,21 @@ fun DeveloperTestingCard(
             // faint with dynamic color). Force a primary-toned border so the
             // harness buttons are clearly outlined in both light and dark mode.
             val harnessBorder = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.65f))
+            // Simulated breaches run the full enforcement path (~20 Dhizuku binder
+            // transactions for hardening); that must never execute on the main
+            // thread, so each trigger runs on a background dispatcher.
+            val simulateScope = rememberCoroutineScope()
+            fun simulate(block: () -> Unit, message: String) {
+                simulateScope.launch {
+                    withContext(Dispatchers.Default) { block() }
+                    android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = {
-                            DryRunHarness(context, repository).simulateWifiBreach()
-                            android.widget.Toast.makeText(context, "Simulated Wi-Fi breach (+1 point)", android.widget.Toast.LENGTH_SHORT).show()
+                            simulate({ DryRunHarness(context, repository).simulateWifiBreach() }, "Simulated Wi-Fi breach (+1 point)")
                         },
                         modifier = Modifier.weight(1f),
                         border = harnessBorder
@@ -91,8 +104,7 @@ fun DeveloperTestingCard(
                     }
                     OutlinedButton(
                         onClick = {
-                            DryRunHarness(context, repository).simulateBluetoothBreach()
-                            android.widget.Toast.makeText(context, "Simulated Bluetooth breach (+1 point)", android.widget.Toast.LENGTH_SHORT).show()
+                            simulate({ DryRunHarness(context, repository).simulateBluetoothBreach() }, "Simulated Bluetooth breach (+1 point)")
                         },
                         modifier = Modifier.weight(1f),
                         border = harnessBorder
@@ -103,8 +115,7 @@ fun DeveloperTestingCard(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = {
-                            DryRunHarness(context, repository).simulateUsbHostAttach()
-                            android.widget.Toast.makeText(context, "Simulated USB attach (+1 point)", android.widget.Toast.LENGTH_SHORT).show()
+                            simulate({ DryRunHarness(context, repository).simulateUsbHostAttach() }, "Simulated USB attach (+1 point)")
                         },
                         modifier = Modifier.weight(1f),
                         border = harnessBorder

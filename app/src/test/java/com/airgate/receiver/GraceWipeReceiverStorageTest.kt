@@ -25,10 +25,14 @@ import com.airgate.data.repository.SecurityStateRepository
 import com.airgate.domain.model.AppConfig
 import com.airgate.domain.model.SecurityState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import com.airgate.testutil.crypto.AndroidKeyStoreRule
 import org.junit.Rule
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * JVM verification (Robolectric) of the grace-wipe deadline guard against the real
@@ -70,11 +74,33 @@ class GraceWipeReceiverStorageTest {
         receiver.onReceive(context, intent)
     }
 
+    /**
+     * onReceive enqueues the wipe onto a background thread and returns before the
+     * wipe executes (it must never run on the main thread), so the WIPING outcome
+     * is awaited rather than asserted synchronously.
+     */
+    private fun awaitWipe(repository: SecurityStateRepository, timeoutMillis: Long = 5_000) {
+        val deadline = System.currentTimeMillis() + timeoutMillis
+        while (repository.getSecurityState() != SecurityState.WIPING && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10)
+        }
+        assertEquals(SecurityState.WIPING, repository.getSecurityState())
+    }
+
+    /**
+     * A wipe that is legitimately skipped must stay skipped: give any would-be
+     * delayed execution a chance to fire, then assert the state is unchanged.
+     */
+    private fun awaitSettled(repository: SecurityStateRepository, expected: SecurityState) {
+        Thread.sleep(300)
+        assertEquals(expected, repository.getSecurityState())
+    }
+
     @Test
     fun wrongAction_isIgnored() {
         val repository = armCountdownRepository()
         receive(repository, deadline = 0L, action = "com.example.OTHER_ACTION")
-        assertEquals(SecurityState.COUNTDOWN_WIPE, repository.getSecurityState())
+        awaitSettled(repository, SecurityState.COUNTDOWN_WIPE)
     }
 
     @Test
@@ -82,28 +108,28 @@ class GraceWipeReceiverStorageTest {
         val repository = armCountdownRepository()
         val futureDeadline = SystemClock.elapsedRealtime() + 60_000L
         receive(repository, deadline = futureDeadline)
-        assertEquals(SecurityState.COUNTDOWN_WIPE, repository.getSecurityState())
+        awaitSettled(repository, SecurityState.COUNTDOWN_WIPE)
     }
 
     @Test
     fun elapsedDeadline_executesTheWipe() {
         val repository = armCountdownRepository()
         receive(repository, deadline = SystemClock.elapsedRealtime() - 1_000L)
-        assertEquals(SecurityState.WIPING, repository.getSecurityState())
+        awaitWipe(repository)
     }
 
     @Test
     fun deadlineExactlyAtNow_executesTheWipe() {
         val repository = armCountdownRepository()
         receive(repository, deadline = SystemClock.elapsedRealtime())
-        assertEquals(SecurityState.WIPING, repository.getSecurityState())
+        awaitWipe(repository)
     }
 
     @Test
     fun zeroDeadline_neverBlocksTheWipe() {
         val repository = armCountdownRepository()
         receive(repository, deadline = 0L)
-        assertEquals(SecurityState.WIPING, repository.getSecurityState())
+        awaitWipe(repository)
     }
 
     @Test
@@ -114,7 +140,7 @@ class GraceWipeReceiverStorageTest {
 
         receive(repository, deadline = SystemClock.elapsedRealtime() - 1_000L)
 
-        assertEquals(SecurityState.COUNTDOWN_WIPE, repository.getSecurityState())
+        awaitSettled(repository, SecurityState.COUNTDOWN_WIPE)
     }
 
     @Test
@@ -124,6 +150,54 @@ class GraceWipeReceiverStorageTest {
 
         receive(repository, deadline = SystemClock.elapsedRealtime() - 1_000L)
 
-        assertEquals(SecurityState.ALARM_ACTIVE, repository.getSecurityState())
+        awaitSettled(repository, SecurityState.ALARM_ACTIVE)
+    }
+
+    /**
+     * Pins the receiver's threading contract: onReceive must return before the
+     * wipe executes, and the wipe's deadline guard must run on a separate worker
+     * thread — never the main thread. The monotonic-clock read is blocked by a
+     * latch, so while onReceive has already returned, the wipe is still pending;
+     * releasing the latch lets it proceed. If the wipe ever ran inline on the
+     * main thread, onReceive would block in the clock read and the pending-state
+     * assertion below would fail.
+     */
+    @Test
+    fun onReceive_returnsBeforeTheWipeExecutes_andRunsItOffTheMainThread() {
+        val repository = armCountdownRepository()
+        val mainThread = Thread.currentThread()
+        val workerReached = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val workerThreadName = AtomicReference<String>()
+
+        val receiver = object : GraceWipeReceiver(
+            elapsedRealtimeProvider = {
+                workerThreadName.set(Thread.currentThread().name)
+                workerReached.countDown()
+                release.await(5, TimeUnit.SECONDS)
+                SystemClock.elapsedRealtime()
+            }
+        ) {
+            override fun createRepository(context: Context): SecurityStateRepository = repository
+        }
+
+        val intent = Intent(context, GraceWipeReceiver::class.java)
+            .setAction(GraceWipeReceiver.ACTION)
+            .putExtra(GraceWipeReceiver.EXTRA_DEADLINE, 0L)
+
+        receiver.onReceive(context, intent)
+
+        // onReceive has returned, but the wipe is still pending: the worker is
+        // blocked inside the monotonic-clock read and has not touched state yet.
+        assertEquals(SecurityState.COUNTDOWN_WIPE, repository.getSecurityState())
+        // The wipe guard runs on the receiver's worker thread, never the main thread.
+        assertTrue("the wipe worker must start", workerReached.await(3, TimeUnit.SECONDS))
+        assertTrue(
+            "the wipe must run off the main thread (it ran on ${workerThreadName.get()})",
+            workerThreadName.get() != mainThread.name
+        )
+        // Release the clock read; the wipe now proceeds and lands in WIPING.
+        release.countDown()
+        awaitWipe(repository)
     }
 }

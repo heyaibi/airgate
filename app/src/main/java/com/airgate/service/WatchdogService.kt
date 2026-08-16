@@ -42,6 +42,8 @@ import com.airgate.dhizuku.DhizukuManager
 import com.airgate.domain.model.BreachEvent
 import com.airgate.engine.ThreatEngine
 import com.airgate.policy.DevicePolicyEnforcer
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 class WatchdogService : Service(), SignalListener {
 
@@ -72,6 +74,16 @@ class WatchdogService : Service(), SignalListener {
     // tampering with its own persisted state.
     private var auditThread: HandlerThread? = null
     private var auditHandler: Handler? = null
+
+    // Enforcement (breach processing, wipe reconciliation, the boot self-defense
+    // audit) must never run on the main thread: it reaches the Dhizuku binder,
+    // which may block when the Dhizuku server is slow or wedged. Every entry
+    // point below enqueues to this single worker and returns immediately, so a
+    // detector broadcast or service callback can never stall the UI thread.
+    private val breachExecutor: ExecutorService =
+        Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "watchdog-enforcement").apply { isDaemon = true }
+        }
     private val auditRunnable = object : Runnable {
         override fun run() {
             AuditLoop.tick(
@@ -119,7 +131,9 @@ class WatchdogService : Service(), SignalListener {
         val selfDefenseManager = com.airgate.defense.SelfDefenseManager(
             applicationContext, dhizukuManager, threatEngine, BuildConfig.EXPECTED_SIGNATURE_HASH, repository
         )
-        selfDefenseManager.performSelfDefenseAudit()
+        // The audit performs a Dhizuku binder availability check; never run it on
+        // the main thread (a slow Dhizuku server at boot must not block service start).
+        enqueueEnforcement { selfDefenseManager.performSelfDefenseAudit() }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -133,7 +147,8 @@ class WatchdogService : Service(), SignalListener {
         // Reconcile a wipe countdown that may have survived a restart/reboot: a
         // reboot clears AlarmManager alarms, so the persisted deadline is used to
         // re-arm the wipe for the remaining grace or execute it if it elapsed.
-        threatEngine.reconcilePendingWipe()
+        // The reconciliation may fire the wipe itself, so it runs off the main thread.
+        enqueueEnforcement { threatEngine.reconcilePendingWipe() }
 
         startAuditLoop()
         return START_STICKY
@@ -155,6 +170,7 @@ class WatchdogService : Service(), SignalListener {
         auditHandler = null
         auditThread?.quitSafely()
         auditThread = null
+        breachExecutor.shutdown()
         try {
             networkDetector.stopMonitoring()
             unregisterReceiver(radioStateDetector)
@@ -168,7 +184,23 @@ class WatchdogService : Service(), SignalListener {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onBreachDetected(event: BreachEvent) {
-        threatEngine.processBreach(event)
+        // Enforcement reaches the Dhizuku binder, so it must never run inline on
+        // the detector's (main) broadcast thread. Enqueue and return immediately.
+        enqueueEnforcement { threatEngine.processBreach(event) }
+    }
+
+    /**
+     * Enqueues [task] on the enforcement worker. A task submitted while the
+     * service is tearing down (the executor is shut down in onDestroy, and a
+     * broadcast already in flight can still arrive in that window) is dropped
+     * instead of crashing the caller with a rejected-submission exception.
+     */
+    internal fun enqueueEnforcement(task: Runnable) {
+        try {
+            breachExecutor.execute(task)
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            // The watchdog is stopping; a breach landing in the teardown window is dropped.
+        }
     }
 
     private fun createNotificationChannel() {

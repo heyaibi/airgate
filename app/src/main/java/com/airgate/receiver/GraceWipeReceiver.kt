@@ -54,8 +54,19 @@ open class GraceWipeReceiver(
         if (intent.action != ACTION) return
 
         val deadline = intent.getLongExtra(EXTRA_DEADLINE, 0L)
-        val repository = createRepository(context)
-        executeIfDeadlineReached(context, repository, deadline, elapsedRealtimeProvider())
+        // The wipe executes a Dhizuku binder transaction, which may block while the
+        // Dhizuku server is slow or wedged. onReceive must never run it on the main
+        // thread: goAsync keeps the broadcast alive while a background thread runs
+        // the deadline guard and the wipe, then finishes the result.
+        val pendingResult = goAsync()
+        Thread {
+            try {
+                val repository = createRepository(context)
+                executeIfDeadlineReached(context, repository, deadline, elapsedRealtimeProvider())
+            } finally {
+                pendingResult.finish()
+            }
+        }.start()
     }
 
     /**

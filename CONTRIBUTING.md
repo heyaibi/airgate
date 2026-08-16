@@ -26,7 +26,7 @@ Thanks for your interest. Airgate is a personal, security-critical tool: it is a
 
 | Command | What it checks |
 |---|---|
-| `make unit` | 45 JVM unit tests (PIN manager, threat engine, detectors, policy/Dhizuku, repositories, integration) |
+| `make unit` | JVM unit tests (PIN manager, threat engine, detectors, policy/Dhizuku + transaction threading, repositories, integration) |
 | `make lint` | Android lint, clean |
 | `make build` | debug APK assembles |
 | `make android-test` | instrumented tests on a device or the `s4_dev` emulator |

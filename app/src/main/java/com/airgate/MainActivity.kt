@@ -90,9 +90,11 @@ class MainActivity : ComponentActivity() {
 
         // Init Dhizuku client. Permission + overlay + battery grants are handled
         // in the "Required Access & Permissions" section of the settings page so
-        // the owner is not bombarded with dialogs on first launch.
+        // the owner is not bombarded with dialogs on first launch. Binder init
+        // runs off the main thread: a slow or wedged Dhizuku server at launch
+        // must never block the UI thread.
         dhizukuManager = com.airgate.dhizuku.DhizukuManager(applicationContext)
-        dhizukuManager.init()
+        Thread { dhizukuManager.init() }.start()
 
         // Start Watchdog service
         WatchdogService.startService(applicationContext)

@@ -22,6 +22,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -30,6 +35,9 @@ import com.airgate.domain.model.AppConfig
 import com.airgate.policy.DevicePolicyEnforcer
 import com.airgate.service.SafetyNetScheduler
 import com.airgate.service.WatchdogService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Master Controls card: watchdog master switch, paranoid preset, and the verified
@@ -54,6 +62,13 @@ fun MasterControlsCard(
     onNotificationsBlocked: () -> Unit,
     onBluetoothBlocked: () -> Unit
 ) {
+    // The ADB block toggle enforces ~20 Dhizuku binder transactions and verifies
+    // the result before committing; that work must never run on the main thread,
+    // so the toggle launches it on a background dispatcher. The busy flag keeps a
+    // second toggle from re-entering while an enforcement is in flight.
+    val enforceScope = rememberCoroutineScope()
+    var enforceBusy by remember { mutableStateOf(false) }
+
     SettingsCard(title = "MASTER PREFERENCES") {
         SettingToggleRow(
             title = "Enable Watchdog",
@@ -146,30 +161,39 @@ fun MasterControlsCard(
             hint = "Enforces DISALLOW_DEBUGGING_FEATURES (hides developer options & USB debugging). Turning this OFF clears the restriction immediately so the device can be recovered via ADB without a factory reset.",
             checked = config.blockDebuggingFeatures,
             onCheckedChange = { enabled ->
-                // Enforce, verify against the device, then commit or revert.
-                val target = config.copy(blockDebuggingFeatures = enabled)
-                val ok = runCatching {
-                    val results = blockEnforcer.enforceAllPolicies(target)
-                    val verified = blockEnforcer.isDebuggingBlockEffective(target)
-                    val writesOk = results[UserManager.DISALLOW_DEBUGGING_FEATURES] == true &&
-                        results["adb_enabled"] == true &&
-                        results["development_settings_enabled"] == true
-                    verified && writesOk
-                }.getOrDefault(false)
-                if (ok) {
-                    onConfigChange(target)
-                    onBlockStatusChange(
-                        if (enabled) "ADB blocked and verified." else "ADB enabled — recovery available.",
-                        false
-                    )
-                } else {
-                    // Leave config untouched so the switch snaps back; surface
-                    // the failure instead of pretending the device is blocked.
-                    onBlockStatusChange(
-                        if (!dhizukuGranted) "Requires Dhizuku grant — cannot block ADB."
-                        else "Enforcement failed — ADB state not verified.",
-                        true
-                    )
+                if (enforceBusy) return@SettingToggleRow
+                enforceBusy = true
+                // Enforce, verify against the device, then commit or revert. Runs
+                // off the main thread: each policy write is a Dhizuku binder
+                // transaction, and a slow or wedged server must never stall the UI.
+                enforceScope.launch {
+                    val target = config.copy(blockDebuggingFeatures = enabled)
+                    val ok = withContext(Dispatchers.Default) {
+                        runCatching {
+                            val results = blockEnforcer.enforceAllPolicies(target)
+                            val verified = blockEnforcer.isDebuggingBlockEffective(target)
+                            val writesOk = results[UserManager.DISALLOW_DEBUGGING_FEATURES] == true &&
+                                results["adb_enabled"] == true &&
+                                results["development_settings_enabled"] == true
+                            verified && writesOk
+                        }.getOrDefault(false)
+                    }
+                    if (ok) {
+                        onConfigChange(target)
+                        onBlockStatusChange(
+                            if (enabled) "ADB blocked and verified." else "ADB enabled — recovery available.",
+                            false
+                        )
+                    } else {
+                        // Leave config untouched so the switch snaps back; surface
+                        // the failure instead of pretending the device is blocked.
+                        onBlockStatusChange(
+                            if (!dhizukuGranted) "Requires Dhizuku grant — cannot block ADB."
+                            else "Enforcement failed — ADB state not verified.",
+                            true
+                        )
+                    }
+                    enforceBusy = false
                 }
             }
         )

@@ -131,6 +131,10 @@ fun RequiredPermissionsCard(
             )
             Button(
                 onClick = {
+                    // The grant request is a bounded Dhizuku transaction: a wedged
+                    // Dhizuku server stalls this call for at most the manager's
+                    // timeout (default 3s, under the ANR threshold) and reports
+                    // "not granted" instead of blocking the UI indefinitely.
                     dhizukuManager.requestPermission(context) { granted ->
                         onDhizukuGrantedChange(granted)
                     }

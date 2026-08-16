@@ -104,6 +104,9 @@ fun SettingsScreen(
     var showNotificationsRequiredDialog by remember { mutableStateOf(false) }
     var showBluetoothRequiredDialog by remember { mutableStateOf(false) }
     val pinUsable by remember { mutableStateOf(repository.isPinUsable()) }
+    // Dhizuku availability is a bounded transaction (DhizukuManager's executor
+    // timeout, default 3s, under the ANR threshold): a wedged Dhizuku server
+    // stalls this status read for at most the bound and reports "not granted".
     var dhizukuGranted by remember { mutableStateOf(dhizukuManager.isDhizukuAvailable()) }
     var overlayGranted by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     var batteryExempt by remember {
@@ -312,6 +315,7 @@ fun SettingsScreen(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
+                // Bounded Dhizuku availability read (see the initial value above).
                 dhizukuGranted = dhizukuManager.isDhizukuAvailable()
                 overlayGranted = Settings.canDrawOverlays(context)
                 batteryExempt = powerManager.isIgnoringBatteryOptimizations(context.packageName)
