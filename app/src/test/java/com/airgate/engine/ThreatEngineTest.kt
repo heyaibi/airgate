@@ -32,6 +32,9 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.UUID
 
 class ThreatEngineTest {
@@ -909,9 +912,100 @@ class ThreatEngineTest {
         assertEquals(1, scheduler.scheduleCalls)
     }
 
+    // --- Countdown latch: an active wipe countdown is never re-armed ---
+
+    @Test
+    fun `re-invoking executeWipeState while in the countdown does not re-arm the wipe`() {
+        repository.saveConfig(AppConfig(isEnabled = true, dryRunMode = true, graceWindowSeconds = 60))
+        val scheduler = RecordingGraceWipeScheduler()
+        val engine = ThreatEngine(context, repository, dhizukuManager, customWindowMs = 0L, alarmNotifier = notifier, graceWipeScheduler = scheduler)
+
+        engine.executeWipeState()
+        val firstDeadline = repository.getWipeDeadline()
+        assertEquals(SecurityState.COUNTDOWN_WIPE, repository.getSecurityState())
+        assertEquals(1, scheduler.scheduleCalls)
+
+        // A second wipe escalation must be a no-op: the running countdown is
+        // latched, so the absolute deadline and the scheduled alarm are untouched.
+        engine.executeWipeState()
+
+        assertEquals(SecurityState.COUNTDOWN_WIPE, repository.getSecurityState())
+        assertEquals("the absolute wipe deadline must not move", firstDeadline, repository.getWipeDeadline())
+        assertEquals("the wipe must not be re-armed", 1, scheduler.scheduleCalls)
+        assertEquals("the countdown must not be re-launched", 1, notifier.countdownLaunches)
+    }
+
+    @Test
+    fun `a second breach reaching the threshold while in the countdown does not re-arm`() {
+        repository.saveConfig(AppConfig(isEnabled = true, dryRunMode = true, wipeThreshold = 1, graceWindowSeconds = 60))
+        val scheduler = RecordingGraceWipeScheduler()
+        val engine = ThreatEngine(context, repository, dhizukuManager, customWindowMs = 0L, alarmNotifier = notifier, graceWipeScheduler = scheduler)
+
+        engine.processBreach(breach(ViolationType.AIRPLANE_MODE_OFF, ResponseTier.ALARM_STREAK))
+        assertEquals(SecurityState.COUNTDOWN_WIPE, repository.getSecurityState())
+        val firstDeadline = repository.getWipeDeadline()
+        assertEquals(1, scheduler.scheduleCalls)
+
+        // A later breach that again reaches the threshold must not reset the clock.
+        engine.processBreach(breach(ViolationType.VALIDATED_NETWORK, ResponseTier.ALARM_STREAK))
+
+        assertEquals(SecurityState.COUNTDOWN_WIPE, repository.getSecurityState())
+        assertEquals("the absolute wipe deadline must not move", firstDeadline, repository.getWipeDeadline())
+        assertEquals("the wipe must not be re-armed", 1, scheduler.scheduleCalls)
+    }
+
+    @Test
+    fun `an INSTANT_WIPE breach while in the countdown does not re-arm`() {
+        repository.saveConfig(AppConfig(isEnabled = true, dryRunMode = true, wipeThreshold = 1, graceWindowSeconds = 60))
+        val scheduler = RecordingGraceWipeScheduler()
+        val engine = ThreatEngine(context, repository, dhizukuManager, customWindowMs = 0L, alarmNotifier = notifier, graceWipeScheduler = scheduler)
+
+        engine.processBreach(breach(ViolationType.AIRPLANE_MODE_OFF, ResponseTier.ALARM_STREAK))
+        assertEquals(SecurityState.COUNTDOWN_WIPE, repository.getSecurityState())
+        val firstDeadline = repository.getWipeDeadline()
+
+        engine.processBreach(breach(ViolationType.BLUETOOTH_ACTIVITY, ResponseTier.INSTANT_WIPE))
+
+        assertEquals(SecurityState.COUNTDOWN_WIPE, repository.getSecurityState())
+        assertEquals("the absolute wipe deadline must not move", firstDeadline, repository.getWipeDeadline())
+        assertEquals("the wipe must not be re-armed", 1, scheduler.scheduleCalls)
+    }
+
+    @Test
+    fun `the countdown latch does not block the wipe once the grace has elapsed`() {
+        // The receiver drives the wipe with graceElapsed=true; the latch must only
+        // prevent re-arming an active countdown, never stop the wipe that fires on
+        // its deadline. The wipe must still execute and leave the countdown.
+        repository.saveConfig(AppConfig(isEnabled = true, dryRunMode = true, graceWindowSeconds = 60))
+        repository.setSecurityState(SecurityState.COUNTDOWN_WIPE)
+        repository.setWipeDeadline(repository.getMonotonicNow() + 60_000L)
+        val scheduler = RecordingGraceWipeScheduler()
+        val engine = ThreatEngine(context, repository, dhizukuManager, customWindowMs = 0L, alarmNotifier = notifier, graceWipeScheduler = scheduler)
+
+        engine.executeWipeState(graceElapsed = true)
+
+        assertEquals(SecurityState.WIPING, repository.getSecurityState())
+        assertEquals(0L, repository.getWipeDeadline())
+    }
+
+    @Test
+    fun `the countdown latch does not block an immediate wipe when the grace window is zero`() {
+        // When graceWindowSeconds is zero there is no countdown to latch: an
+        // escalation executes the wipe immediately even if a stale countdown state
+        // was recorded.
+        repository.saveConfig(AppConfig(isEnabled = true, dryRunMode = true, graceWindowSeconds = 0))
+        repository.setSecurityState(SecurityState.COUNTDOWN_WIPE)
+        repository.setWipeDeadline(repository.getMonotonicNow() + 60_000L)
+
+        threatEngine.executeWipeState()
+
+        assertEquals(SecurityState.WIPING, repository.getSecurityState())
+    }
+
     @Test
     fun `executing the wipe clears the persisted deadline`() {
         repository.saveConfig(AppConfig(isEnabled = true, dryRunMode = true, graceWindowSeconds = 0))
+        repository.setSecurityState(SecurityState.COUNTDOWN_WIPE)
         repository.setWipeDeadline(repository.getMonotonicNow() + 60_000L)
         assertTrue(repository.getWipeDeadline() > 0L)
 
@@ -924,6 +1018,7 @@ class ThreatEngineTest {
     @Test
     fun `a refused wipe also clears the persisted deadline`() {
         repository.saveConfig(AppConfig(isEnabled = true, dryRunMode = false, graceWindowSeconds = 0))
+        repository.setSecurityState(SecurityState.COUNTDOWN_WIPE)
         repository.setWipeDeadline(repository.getMonotonicNow() + 60_000L)
         val refusedBinder = MockDhizukuBinder().apply { wipeAccepted = false }
         val engine = ThreatEngine(context, repository, DhizukuManager(context, refusedBinder), customWindowMs = 0L, alarmNotifier = notifier)
@@ -937,6 +1032,7 @@ class ThreatEngineTest {
     @Test
     fun `cancelPendingWipe clears the persisted deadline and cancels the alarm`() {
         repository.setWipeDeadline(repository.getMonotonicNow() + 60_000L)
+        repository.setSecurityState(SecurityState.COUNTDOWN_WIPE)
         val scheduler = RecordingGraceWipeScheduler()
         val engine = ThreatEngine(context, repository, dhizukuManager, customWindowMs = 0L, alarmNotifier = notifier, graceWipeScheduler = scheduler)
 
@@ -944,6 +1040,81 @@ class ThreatEngineTest {
 
         assertEquals(1, scheduler.cancelCalls)
         assertEquals(0L, repository.getWipeDeadline())
+        assertEquals(SecurityState.ARMED_COMPLIANT, repository.getSecurityState())
+    }
+
+    @Test
+    fun `a stale grace completion after disarm does not execute the wipe`() {
+        repository.saveConfig(AppConfig(isEnabled = true, dryRunMode = true, graceWindowSeconds = 60))
+        repository.setSecurityState(SecurityState.COUNTDOWN_WIPE)
+        repository.setWipeDeadline(repository.getMonotonicNow() + 60_000L)
+
+        threatEngine.cancelPendingWipe()
+        threatEngine.executeWipeState(graceElapsed = true)
+
+        assertEquals(SecurityState.ARMED_COMPLIANT, repository.getSecurityState())
+        assertEquals(0L, repository.getWipeDeadline())
+    }
+
+    @Test
+    fun `reconciliation after disarm does not re-arm the cancelled wipe`() {
+        repository.saveConfig(AppConfig(isEnabled = true, dryRunMode = true, graceWindowSeconds = 60))
+        repository.setSecurityState(SecurityState.COUNTDOWN_WIPE)
+        repository.setWipeDeadline(repository.getMonotonicNow() + 60_000L)
+        val scheduler = RecordingGraceWipeScheduler()
+        val engine = ThreatEngine(
+            context,
+            repository,
+            dhizukuManager,
+            customWindowMs = 0L,
+            alarmNotifier = notifier,
+            graceWipeScheduler = scheduler
+        )
+
+        engine.cancelPendingWipe()
+        engine.reconcilePendingWipe()
+
+        assertTrue(scheduler.scheduleDelays.isEmpty())
+        assertEquals(SecurityState.ARMED_COMPLIANT, repository.getSecurityState())
+        assertEquals(0L, repository.getWipeDeadline())
+    }
+
+    @Test
+    fun `concurrent countdown starts across engine instances schedule only once`() {
+        repository.saveConfig(AppConfig(isEnabled = true, dryRunMode = true, graceWindowSeconds = 60))
+        val scheduler = RecordingGraceWipeScheduler()
+        val engines = List(16) {
+            ThreatEngine(
+                context,
+                repository,
+                dhizukuManager,
+                customWindowMs = 0L,
+                alarmNotifier = notifier,
+                graceWipeScheduler = scheduler
+            )
+        }
+        val ready = CountDownLatch(engines.size)
+        val start = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(engines.size)
+
+        try {
+            val futures = engines.map { engine ->
+                executor.submit {
+                    ready.countDown()
+                    assertTrue(start.await(5, TimeUnit.SECONDS))
+                    engine.executeWipeState()
+                }
+            }
+            assertTrue(ready.await(5, TimeUnit.SECONDS))
+            start.countDown()
+            futures.forEach { it.get(5, TimeUnit.SECONDS) }
+
+            assertEquals(SecurityState.COUNTDOWN_WIPE, repository.getSecurityState())
+            assertEquals(1, scheduler.scheduleCalls)
+            assertEquals(1, notifier.countdownLaunches)
+        } finally {
+            executor.shutdownNow()
+        }
     }
 
     @Test

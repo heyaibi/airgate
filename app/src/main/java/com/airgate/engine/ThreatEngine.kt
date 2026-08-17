@@ -193,8 +193,11 @@ class ThreatEngine(
     }
 
     fun cancelPendingWipe() {
-        graceWipeScheduler.cancel()
-        repository.setWipeDeadline(0L)
+        synchronized(wipeTransitionLock) {
+            repository.setSecurityState(SecurityState.ARMED_COMPLIANT)
+            repository.setWipeDeadline(0L)
+            graceWipeScheduler.cancel()
+        }
     }
 
     /**
@@ -210,56 +213,66 @@ class ThreatEngine(
      * its pending alarm governs, and alarms survive process death, not reboot.
      */
     fun reconcilePendingWipe() {
-        val config = repository.getConfig()
-        if (!config.isEnabled) return
-        if (repository.getSecurityState() != SecurityState.COUNTDOWN_WIPE) return
-        val deadline = repository.getWipeDeadline()
-        if (deadline <= 0L) return
-        val remaining = repository.getWipeRemainingMs()
-        if (remaining > 0L) {
-            graceWipeScheduler.scheduleDelay(remaining)
-        } else {
-            executeWipeState(graceElapsed = true)
+        synchronized(wipeTransitionLock) {
+            val config = repository.getConfig()
+            if (!config.isEnabled) return
+            if (repository.getSecurityState() != SecurityState.COUNTDOWN_WIPE) return
+            val deadline = repository.getWipeDeadline()
+            if (deadline <= 0L) return
+            val remaining = repository.getWipeRemainingMs()
+            if (remaining > 0L) {
+                graceWipeScheduler.scheduleDelay(remaining)
+            } else {
+                executeWipeState(graceElapsed = true)
+            }
         }
     }
 
     fun executeWipeState(graceElapsed: Boolean = false) {
-        val config = repository.getConfig()
-        if (!graceElapsed && config.graceWindowSeconds > 0) {
-            repository.setSecurityState(SecurityState.COUNTDOWN_WIPE)
-            repository.setWipeDeadline(
-                repository.getMonotonicNow() + config.graceWindowSeconds * 1000L
-            )
-            graceWipeScheduler.schedule(config)
-            raisePendingAlarm(
-                category = COUNTDOWN_ALARM_CATEGORY,
-                description = "A wipe is scheduled. Disarm with your Armed PIN to cancel it.",
-                isCountdown = true
-            )
-            alarmNotifier.launchCountdown()
-        } else {
-            when (wipeController.executeWipe(config)) {
-                WipeResult.ACCEPTED, WipeResult.SIMULATED -> {
-                    repository.setSecurityState(SecurityState.WIPING)
-                    raisePendingAlarm(
-                        category = WIPE_ALARM_CATEGORY,
-                        description = "The device wipe executed. Production protocol would erase all data."
-                    )
+        synchronized(wipeTransitionLock) {
+            val config = repository.getConfig()
+            if (!graceElapsed && config.graceWindowSeconds > 0) {
+                // The wipe countdown is latched: once it is running, a further breach
+                // must not re-arm it. The absolute wipe deadline stands, so repeated
+                // breaches cannot postpone the wipe indefinitely. Only the deadline
+                // reaching or the owner disarming moves the state.
+                if (repository.getSecurityState() == SecurityState.COUNTDOWN_WIPE) return
+                repository.setSecurityState(SecurityState.COUNTDOWN_WIPE)
+                repository.setWipeDeadline(
+                    repository.getMonotonicNow() + config.graceWindowSeconds * 1000L
+                )
+                graceWipeScheduler.schedule(config)
+                raisePendingAlarm(
+                    category = COUNTDOWN_ALARM_CATEGORY,
+                    description = "A wipe is scheduled. Disarm with your Armed PIN to cancel it.",
+                    isCountdown = true
+                )
+                alarmNotifier.launchCountdown()
+            } else {
+                if (graceElapsed && repository.getSecurityState() != SecurityState.COUNTDOWN_WIPE) return
+                when (wipeController.executeWipe(config)) {
+                    WipeResult.ACCEPTED, WipeResult.SIMULATED -> {
+                        repository.setSecurityState(SecurityState.WIPING)
+                        raisePendingAlarm(
+                            category = WIPE_ALARM_CATEGORY,
+                            description = "The device wipe executed. Production protocol would erase all data."
+                        )
+                    }
+                    WipeResult.REJECTED -> {
+                        // The platform refused the wipe: the device's data is still present,
+                        // so it must never be shown as wiped. Return to the alarm state and
+                        // surface the failure loudly instead of silently claiming success.
+                        repository.setSecurityState(SecurityState.ALARM_ACTIVE)
+                        raisePendingAlarm(
+                            category = WIPE_FAILED_ALARM_CATEGORY,
+                            description = "The wipe was rejected by the system; device data has not been erased."
+                        )
+                        alarmNotifier.launchWipeFailure()
+                    }
                 }
-                WipeResult.REJECTED -> {
-                    // The platform refused the wipe: the device's data is still present,
-                    // so it must never be shown as wiped. Return to the alarm state and
-                    // surface the failure loudly instead of silently claiming success.
-                    repository.setSecurityState(SecurityState.ALARM_ACTIVE)
-                    raisePendingAlarm(
-                        category = WIPE_FAILED_ALARM_CATEGORY,
-                        description = "The wipe was rejected by the system; device data has not been erased."
-                    )
-                    alarmNotifier.launchWipeFailure()
-                }
+                // The scheduled wipe is no longer pending once it fired (or was refused).
+                repository.setWipeDeadline(0L)
             }
-            // The scheduled wipe is no longer pending once it fired (or was refused).
-            repository.setWipeDeadline(0L)
         }
     }
 
@@ -281,6 +294,7 @@ class ThreatEngine(
     }
 
     companion object {
+        private val wipeTransitionLock = Any()
         const val COUNTDOWN_ALARM_CATEGORY = "WIPE COUNTDOWN"
         const val WIPE_ALARM_CATEGORY = "WIPE EXECUTED"
         const val WIPE_FAILED_ALARM_CATEGORY = "WIPE FAILED"

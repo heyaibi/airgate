@@ -63,6 +63,10 @@ class GraceWipeSchedulerInstrumentedTest {
         { 0L }
     ) {
         val scheduleDelays = mutableListOf<Long>()
+        var scheduleCalls = 0
+        override fun schedule(config: AppConfig) {
+            scheduleCalls++
+        }
         override fun scheduleDelay(delayMs: Long) {
             scheduleDelays.add(delayMs)
         }
@@ -101,10 +105,10 @@ class GraceWipeSchedulerInstrumentedTest {
      * deadline extra set to the current monotonic time so the deadline guard
      * passes and the wipe executes. Deterministic — no wall-clock wait.
      */
-    private fun fireScheduledWipe() {
+    private fun fireScheduledWipe(deadline: Long = SystemClock.elapsedRealtime()) {
         val intent = Intent(context, GraceWipeReceiver::class.java).apply {
             action = GraceWipeReceiver.ACTION
-            putExtra(GraceWipeReceiver.EXTRA_DEADLINE, SystemClock.elapsedRealtime())
+            putExtra(GraceWipeReceiver.EXTRA_DEADLINE, deadline)
         }
         // GRACE_WIPE_REQUEST_CODE mirrors GraceWipeScheduler's private constant so
         // the delivered PendingIntent is the scheduled one (extras are replaced).
@@ -122,6 +126,18 @@ class GraceWipeSchedulerInstrumentedTest {
             state = repository.getSecurityState()
         }
         assertEquals(expected, state)
+    }
+
+    private fun awaitWipeSettled(repository: SecurityStateRepository, timeoutMillis: Long = 5_000) {
+        val deadline = System.currentTimeMillis() + timeoutMillis
+        while (
+            (repository.getSecurityState() != SecurityState.WIPING || repository.getWipeDeadline() != 0L) &&
+            System.currentTimeMillis() < deadline
+        ) {
+            Thread.sleep(50)
+        }
+        assertEquals(SecurityState.WIPING, repository.getSecurityState())
+        assertEquals(0L, repository.getWipeDeadline())
     }
 
     /**
@@ -286,6 +302,92 @@ class GraceWipeSchedulerInstrumentedTest {
             assertEquals(SecurityState.WIPING, repository.getSecurityState())
             assertEquals(0L, repository.getWipeDeadline())
         } finally {
+            prefs.edit().clear().commit()
+        }
+    }
+
+    // --- Countdown latch: an active wipe countdown is never re-armed ---
+
+    @Test
+    fun reEscalationWhileInCountdown_doesNotRearmTheWipeOrMoveTheDeadline() {
+        // A further wipe escalation while the countdown is already running must
+        // not re-arm the alarm or push the absolute deadline out. On device this
+        // is observable through the injected scheduler (no new schedule call) and
+        // the persisted deadline (unchanged).
+        val prefs = realPrefs()
+        try {
+            val repository = SecurityStateRepository(prefs, null, notificationsAllowedProvider = { true })
+            repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+            repository.saveConfig(
+                AppConfig(isEnabled = true, dryRunMode = true, graceWindowSeconds = 60)
+            )
+            repository.setSecurityState(SecurityState.ARMED_COMPLIANT)
+
+            val recording = RecordingGraceWipeScheduler()
+            val engine = ThreatEngine(
+                context, repository, DhizukuManager(context),
+                graceWipeScheduler = recording
+            )
+
+            engine.executeWipeState()
+            assertEquals(SecurityState.COUNTDOWN_WIPE, repository.getSecurityState())
+            assertEquals(1, recording.scheduleCalls)
+            val firstDeadline = repository.getWipeDeadline()
+            assertTrue("the countdown must persist a deadline", firstDeadline > 0L)
+
+            // A second escalation while the countdown runs must be a no-op.
+            engine.executeWipeState()
+
+            assertEquals(SecurityState.COUNTDOWN_WIPE, repository.getSecurityState())
+            assertEquals("the wipe must not be re-armed", 1, recording.scheduleCalls)
+            assertEquals(
+                "the absolute wipe deadline must not move",
+                firstDeadline,
+                repository.getWipeDeadline()
+            )
+        } finally {
+            prefs.edit().clear().commit()
+        }
+    }
+
+    @Test
+    fun latchedCountdown_stillFiresTheWipeOnItsDeadline() {
+        // The latch only prevents re-arming an active countdown; it must never
+        // stop the scheduled wipe from executing on the original deadline.
+        // AlarmManager may defer setAndAllowWhileIdle() for much longer than this
+        // test should wait, so deliver the same PendingIntent deterministically
+        // with the persisted deadline after the real scheduler has installed it.
+        val prefs = realPrefs()
+        val scheduler = GraceWipeScheduler(context)
+        try {
+            val repository = SecurityStateRepository(prefs, null, notificationsAllowedProvider = { true })
+            repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+            repository.saveConfig(
+                AppConfig(isEnabled = true, dryRunMode = true, graceWindowSeconds = 1)
+            )
+            repository.setSecurityState(SecurityState.ARMED_COMPLIANT)
+
+            val engine = ThreatEngine(
+                context, repository, DhizukuManager(context),
+                graceWipeScheduler = scheduler
+            )
+
+            engine.executeWipeState()
+            assertEquals(SecurityState.COUNTDOWN_WIPE, repository.getSecurityState())
+            val firstDeadline = repository.getWipeDeadline()
+
+            // A second escalation is latched and must not replace the real alarm
+            // with a later one.
+            engine.executeWipeState()
+            assertEquals(firstDeadline, repository.getWipeDeadline())
+
+            while (SystemClock.elapsedRealtime() < firstDeadline) {
+                Thread.sleep(25)
+            }
+            fireScheduledWipe(firstDeadline)
+            awaitWipeSettled(repository)
+        } finally {
+            scheduler.cancel()
             prefs.edit().clear().commit()
         }
     }
