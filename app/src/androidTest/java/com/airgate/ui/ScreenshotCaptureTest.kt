@@ -147,15 +147,15 @@ class ScreenshotCaptureTest {
         composeRule.waitForIdle()
         park("pin-change")
 
-        // 8. Simulated wipe screen. The wipe UI is driven by MainActivity's in-memory
-        //    state, which is read from the repository on (re)creation, so set WIPING in
-        //    the repository and recreate the activity to surface it.
+        // 8. Simulated wipe screen. The wipe UI is driven by MainActivity's
+        //    collection of the repository's process-wide security-state flow, so
+        //    setting WIPING in the repository surfaces the screen immediately —
+        //    no activity recreation is needed.
         composeRule.onNodeWithContentDescription("Back").performClick()
         waitForText("Security Settings")
         composeRule.onNodeWithContentDescription("Back").performClick()
         waitForText("THREAT SCORE")
         repository.setSecurityState(SecurityState.WIPING)
-        scenario.recreate()
         waitForText("DEVICE WIPE EXECUTED")
         composeRule.waitForIdle()
         park("wipe")

@@ -27,6 +27,7 @@ import com.airgate.domain.model.AppConfig
 import com.airgate.domain.model.PendingAlarm
 import com.airgate.domain.model.SecurityState
 import com.airgate.domain.model.ViolationType
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Facade over the shared prefs-backed stores. Each responsibility lives in its own
@@ -138,6 +139,17 @@ class SecurityStateRepository(
     fun getPinLockoutRemainingMs(): Long = pinStore.getPinLockoutRemainingMs()
 
     // --- Enforcement state ---
+
+    /**
+     * Process-wide observable of the current [SecurityState]. The watchdog
+     * service, audit loop, schedulers, and receivers each build their own
+     * repository instance, so the flow is shared across instances: a breach
+     * that flips the state to WIPING in the background is pushed to every
+     * collector immediately, without waiting for a lifecycle event or a
+     * re-read. It is updated on every write and re-synced on every read, so it
+     * always reflects the persisted value.
+     */
+    val securityStateFlow: StateFlow<SecurityState> = EnforcementStateStore.securityStateFlow
 
     fun getSecurityState(): SecurityState = enforcementStateStore.getSecurityState()
 

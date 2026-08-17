@@ -20,6 +20,9 @@ import android.content.SharedPreferences
 import androidx.core.content.edit
 import com.airgate.domain.model.PendingAlarm
 import com.airgate.domain.model.SecurityState
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Persistence of the enforcement state (armed/alarm/wipe SecurityState), the
@@ -61,6 +64,27 @@ internal class EnforcementStateStore(
          * counters, so they are not covered by this lock.
          */
         private val streakLock = Any()
+
+        /**
+         * Process-wide observable mirror of the persisted security state. The
+         * repository is constructed independently by several components that run
+         * concurrently (the watchdog service, the audit loop, schedulers, broadcast
+         * receivers, and the UI), so the flow must be shared by every store
+         * instance in the process: a per-instance flow would let a write from the
+         * watchdog's instance be invisible to the UI's instance. It is updated on
+         * every write and re-synced on every read, so it always converges to the
+         * persisted value — including a fail-closed read of a corrupt blob.
+         */
+        private val _securityStateFlow = MutableStateFlow(SecurityState.ARMED_COMPLIANT)
+        val securityStateFlow: StateFlow<SecurityState> = _securityStateFlow.asStateFlow()
+    }
+
+    init {
+        // Seed the process-wide flow from the persisted state so a fresh
+        // collector never observes a stale value left by an earlier writer in
+        // the process (a fresh install reads compliant without touching the
+        // keystore; a persisted state pays one decrypt, then stays cached).
+        _securityStateFlow.value = getSecurityState()
     }
 
     @Volatile
@@ -78,12 +102,19 @@ internal class EnforcementStateStore(
     fun getSecurityState(): SecurityState {
         val raw = store.readRawPref(KEY_SECURITY_STATE)
         val cached = securityStateCache
-        if (cached != null && securityStateRawCache == raw) {
-            return cached
+        val state = if (cached != null && securityStateRawCache == raw) {
+            cached
+        } else {
+            val s = readSecurityStateOrFailClosed(raw)
+            securityStateCache = s
+            securityStateRawCache = raw
+            s
         }
-        val state = readSecurityStateOrFailClosed(raw)
-        securityStateCache = state
-        securityStateRawCache = raw
+        // Re-sync the process-wide flow on every read so it converges to the
+        // persisted value even when the state changed without a setSecurityState
+        // (e.g. a fail-closed read of a corrupt blob). StateFlow deduplicates an
+        // unchanged value, so this is a no-op on the hot path.
+        _securityStateFlow.value = state
         return state
     }
 
@@ -110,6 +141,7 @@ internal class EnforcementStateStore(
         store.protectedPutString(KEY_SECURITY_STATE, state.name)
         securityStateCache = state
         securityStateRawCache = store.readRawPref(KEY_SECURITY_STATE)
+        _securityStateFlow.value = state
     }
 
     fun getStreak(): Int = synchronized(streakLock) {

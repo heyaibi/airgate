@@ -31,6 +31,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.airgate.data.repository.SecurityStateRepository
 import com.airgate.data.repository.ThemePrefsStore
 import com.airgate.domain.model.SecurityState
@@ -60,7 +61,6 @@ class MainActivity : ComponentActivity() {
     // Hoisted to class scope so the lifecycle observer and the
     // recomposition layer share the same single source of truth.
     private val currentScreen = mutableStateOf(Screen.AUTH_PIN)
-    private val securityState = mutableStateOf(SecurityState.ARMED_COMPLIANT)
     // Appearance preference: off by default, so the app renders with its brand
     // #0055EA accent. Toggled from Settings; the theme recomposes immediately.
     private val useSystemColors = mutableStateOf(false)
@@ -71,7 +71,6 @@ class MainActivity : ComponentActivity() {
     private val relockHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val autoRelockRunnable = Runnable {
         currentScreen.value = Screen.AUTH_PIN
-        securityState.value = runCatching { repository.getSecurityState() }.getOrDefault(SecurityState.ALARM_ACTIVE)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -83,7 +82,6 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         repository = SecurityStateRepository(applicationContext)
-        securityState.value = repository.getSecurityState()
 
         themePrefs = ThemePrefsStore(getSharedPreferences("airgate_ui_prefs", MODE_PRIVATE))
         useSystemColors.value = themePrefs.getUseSystemColors()
@@ -112,6 +110,11 @@ class MainActivity : ComponentActivity() {
         })
 
         setContent {
+            // The security state is collected from the repository's process-wide
+            // flow, so a breach that flips the state to WIPING in the background
+            // (watchdog service, audit loop, receivers) surfaces the wipe screen
+            // immediately — no lifecycle event or re-read required.
+            val securityState by repository.securityStateFlow.collectAsStateWithLifecycle()
             com.airgate.ui.theme.AirgateTheme(useSystemColors = useSystemColors.value) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     // Quick Actions as a persistent bottom navigation bar. The bar stays
@@ -125,7 +128,7 @@ class MainActivity : ComponentActivity() {
                             QuickActionsBottomBar(
                                 currentScreen = currentScreen.value,
                                 enabled = currentScreen.value != Screen.AUTH_PIN &&
-                                    securityState.value != SecurityState.WIPING,
+                                    securityState != SecurityState.WIPING,
                                 onSelect = { screen ->
                                     if (screen == Screen.VIOLATION_GUIDE) guideInitialTab = 0
                                     currentScreen.value = screen
@@ -135,7 +138,7 @@ class MainActivity : ComponentActivity() {
                     ) { innerPadding ->
                         Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
                             // System back gesture handler
-                            BackHandler(enabled = currentScreen.value != Screen.DASHBOARD && currentScreen.value != Screen.AUTH_PIN && securityState.value != SecurityState.WIPING) {
+                            BackHandler(enabled = currentScreen.value != Screen.DASHBOARD && currentScreen.value != Screen.AUTH_PIN && securityState != SecurityState.WIPING) {
                                 when (currentScreen.value) {
                                     Screen.SETTINGS -> currentScreen.value = Screen.DASHBOARD
                                     Screen.PIN_MANAGEMENT -> currentScreen.value = Screen.SETTINGS
@@ -145,17 +148,14 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
-                            if (securityState.value == SecurityState.WIPING) {
-                                SimulatedWipeScreen(
-                                    repository = repository,
-                                    onResetStreakRequested = {
-                                        repository.resetStreak()
-                                        repository.setSecurityState(SecurityState.ARMED_COMPLIANT)
-                                        securityState.value = repository.getSecurityState()
-                                        currentScreen.value = Screen.DASHBOARD
-                                    }
-                                )
-                            } else {
+                            WipeGate(
+                                securityState = securityState,
+                                repository = repository,
+                                onResetStreakRequested = {
+                                    repository.resetStreak()
+                                    currentScreen.value = Screen.DASHBOARD
+                                }
+                            ) {
                                 when (currentScreen.value) {
                                     Screen.AUTH_PIN -> AuthPinScreen(
                                         repository = repository,
@@ -202,5 +202,28 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+}
+
+/**
+ * Renders the emergency wipe screen whenever the security state is WIPING,
+ * replacing the normal navigation content. The state is collected from the
+ * repository's process-wide flow by the caller, so a background breach that
+ * flips the state to WIPING surfaces this screen immediately.
+ */
+@Composable
+fun WipeGate(
+    securityState: SecurityState,
+    repository: SecurityStateRepository,
+    onResetStreakRequested: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    if (securityState == SecurityState.WIPING) {
+        SimulatedWipeScreen(
+            repository = repository,
+            onResetStreakRequested = onResetStreakRequested
+        )
+    } else {
+        content()
     }
 }
