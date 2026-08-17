@@ -21,6 +21,7 @@ import com.airgate.data.crypto.JvmPrefsCrypto
 import com.airgate.data.repository.SecurityStateRepository
 import com.airgate.domain.model.AppConfig
 import com.airgate.domain.model.SecurityState
+import com.airgate.engine.GraceWipeScheduler
 import com.airgate.testutil.InMemorySharedPreferences
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -28,8 +29,9 @@ import org.junit.Test
 /**
  * Pure-JVM guard tests for [GraceWipeReceiver]. The deadline decision runs on
  * an explicit monotonic [now] parameter — never the wall clock — so a rolled-back
- * wall clock cannot cancel an elapsed wipe. (The full onReceive path, including
- * the Intent deadline extra and the injected clock wiring, is covered on-device.)
+ * wall clock cannot cancel an elapsed wipe. When the alarm fires before the
+ * deadline, the receiver re-arms the remaining delay instead of dropping the
+ * wipe (a spent one-shot alarm must not lose the wipe).
  */
 class GraceWipeReceiverTest {
 
@@ -37,6 +39,18 @@ class GraceWipeReceiverTest {
         override fun getApplicationContext(): Context = this
         override fun getPackageName(): String = "com.airgate"
         override fun getSystemService(name: String): Any? = null
+    }
+
+    private class RecordingGraceWipeScheduler : GraceWipeScheduler(DummyContext(), { 0L }) {
+        val scheduleDelays = mutableListOf<Long>()
+        override fun scheduleDelay(delayMs: Long) {
+            scheduleDelays.add(delayMs)
+        }
+    }
+
+    private class RecordingRearmLogger {
+        val rearmedMs = mutableListOf<Long>()
+        val log: (Long) -> Unit = { rearmedMs.add(it) }
     }
 
     private val context = DummyContext()
@@ -53,6 +67,12 @@ class GraceWipeReceiverTest {
     }
 
     private fun receiver() = GraceWipeReceiver()
+
+    /** A receiver that records any re-arm onto [scheduler] instead of touching AlarmManager. */
+    private fun receiverWith(
+        scheduler: RecordingGraceWipeScheduler,
+        logger: RecordingRearmLogger = RecordingRearmLogger()
+    ) = GraceWipeReceiver(schedulerProvider = { scheduler }, rearmLogger = logger.log)
 
     @Test
     fun disabledConfig_skipsTheWipeEvenWhenTheDeadlineHasElapsed() {
@@ -76,51 +96,153 @@ class GraceWipeReceiverTest {
     }
 
     @Test
-    fun deadlineInTheFuture_skipsTheWipe() {
+    fun deadlineInTheFuture_rearmsTheRemainingDelayAndSkipsTheWipe() {
         val repository = countdownRepository()
+        val scheduler = RecordingGraceWipeScheduler()
+        val logger = RecordingRearmLogger()
 
-        receiver().executeIfDeadlineReached(context, repository, deadline = 150_000L, now = 100_000L)
+        receiverWith(scheduler, logger)
+            .executeIfDeadlineReached(context, repository, deadline = 150_000L, now = 100_000L)
 
+        assertEquals(listOf(50_000L), scheduler.scheduleDelays)
+        assertEquals(listOf(50_000L), logger.rearmedMs)
         assertEquals(SecurityState.COUNTDOWN_WIPE, repository.getSecurityState())
     }
 
     @Test
-    fun deadlineExactlyAtNow_executesTheWipe() {
+    fun deadlineInTheFuture_rearmsExactlyTheRemainingTime() {
         val repository = countdownRepository()
+        val scheduler = RecordingGraceWipeScheduler()
+        val logger = RecordingRearmLogger()
 
-        receiver().executeIfDeadlineReached(context, repository, deadline = 100_000L, now = 100_000L)
+        receiverWith(scheduler, logger)
+            .executeIfDeadlineReached(context, repository, deadline = 160_000L, now = 150_000L)
 
-        assertEquals(SecurityState.WIPING, repository.getSecurityState())
+        assertEquals(listOf(10_000L), scheduler.scheduleDelays)
+        assertEquals(listOf(10_000L), logger.rearmedMs)
     }
 
     @Test
-    fun elapsedDeadline_executesTheWipe() {
+    fun deadlineExactlyAtNow_executesTheWipeAndDoesNotRearm() {
         val repository = countdownRepository()
+        val scheduler = RecordingGraceWipeScheduler()
+        val logger = RecordingRearmLogger()
 
-        receiver().executeIfDeadlineReached(context, repository, deadline = 50_000L, now = 100_000L)
+        receiverWith(scheduler, logger)
+            .executeIfDeadlineReached(context, repository, deadline = 100_000L, now = 100_000L)
 
         assertEquals(SecurityState.WIPING, repository.getSecurityState())
+        assertEquals(emptyList<Long>(), scheduler.scheduleDelays)
+        assertEquals(emptyList<Long>(), logger.rearmedMs)
     }
 
     @Test
-    fun zeroDeadline_neverBlocksTheWipe() {
+    fun elapsedDeadline_executesTheWipeAndDoesNotRearm() {
         val repository = countdownRepository()
+        val scheduler = RecordingGraceWipeScheduler()
+        val logger = RecordingRearmLogger()
 
-        receiver().executeIfDeadlineReached(context, repository, deadline = 0L, now = 100_000L)
+        receiverWith(scheduler, logger)
+            .executeIfDeadlineReached(context, repository, deadline = 50_000L, now = 100_000L)
 
         assertEquals(SecurityState.WIPING, repository.getSecurityState())
+        assertEquals(emptyList<Long>(), scheduler.scheduleDelays)
+        assertEquals(emptyList<Long>(), logger.rearmedMs)
+    }
+
+    @Test
+    fun zeroDeadline_neverBlocksTheWipeAndDoesNotRearm() {
+        val repository = countdownRepository()
+        val scheduler = RecordingGraceWipeScheduler()
+        val logger = RecordingRearmLogger()
+
+        receiverWith(scheduler, logger)
+            .executeIfDeadlineReached(context, repository, deadline = 0L, now = 100_000L)
+
+        assertEquals(SecurityState.WIPING, repository.getSecurityState())
+        assertEquals(emptyList<Long>(), scheduler.scheduleDelays)
+        assertEquals(emptyList<Long>(), logger.rearmedMs)
     }
 
     @Test
     fun theGuardConsultsTheSuppliedMonotonicNowNotAWallClock() {
         // The deadline is 150_000 on the monotonic timeline. At monotonic now
-        // 100_000 it has not elapsed, so the wipe must be skipped. A guard that
-        // consulted the wall clock (whose reading is ~1.7e12 and thus "past"
-        // 150_000) would wrongly execute the wipe here.
+        // 100_000 it has not elapsed, so the wipe must be skipped (and re-armed).
+        // A guard that consulted the wall clock (whose reading is ~1.7e12 and thus
+        // "past" 150_000) would wrongly execute the wipe here.
         val repository = countdownRepository()
+        val scheduler = RecordingGraceWipeScheduler()
+        val logger = RecordingRearmLogger()
 
-        receiver().executeIfDeadlineReached(context, repository, deadline = 150_000L, now = 100_000L)
+        receiverWith(scheduler, logger)
+            .executeIfDeadlineReached(context, repository, deadline = 150_000L, now = 100_000L)
 
         assertEquals(SecurityState.COUNTDOWN_WIPE, repository.getSecurityState())
+        assertEquals(listOf(50_000L), scheduler.scheduleDelays)
+        assertEquals(listOf(50_000L), logger.rearmedMs)
+    }
+
+    @Test
+    fun disabledConfig_doesNotRearmOnEarlyFire() {
+        val repository = countdownRepository()
+        repository.saveConfig(AppConfig(isEnabled = false, dryRunMode = true))
+        repository.setSecurityState(SecurityState.COUNTDOWN_WIPE)
+        val scheduler = RecordingGraceWipeScheduler()
+        val logger = RecordingRearmLogger()
+
+        receiverWith(scheduler, logger)
+            .executeIfDeadlineReached(context, repository, deadline = 150_000L, now = 100_000L)
+
+        assertEquals(emptyList<Long>(), scheduler.scheduleDelays)
+        assertEquals(emptyList<Long>(), logger.rearmedMs)
+    }
+
+    @Test
+    fun stateNoLongerCountdown_doesNotRearmOnEarlyFire() {
+        val repository = countdownRepository()
+        repository.setSecurityState(SecurityState.ALARM_ACTIVE)
+        val scheduler = RecordingGraceWipeScheduler()
+        val logger = RecordingRearmLogger()
+
+        receiverWith(scheduler, logger)
+            .executeIfDeadlineReached(context, repository, deadline = 150_000L, now = 100_000L)
+
+        assertEquals(emptyList<Long>(), scheduler.scheduleDelays)
+        assertEquals(emptyList<Long>(), logger.rearmedMs)
+    }
+
+    // --- rearmRemainingDelay directly ---
+
+    @Test
+    fun rearmRemainingDelay_positiveRemaining_schedulesThatDelay() {
+        val scheduler = RecordingGraceWipeScheduler()
+        val logger = RecordingRearmLogger()
+
+        receiverWith(scheduler, logger).rearmRemainingDelay(context, deadline = 160_000L, now = 100_000L)
+
+        assertEquals(listOf(60_000L), scheduler.scheduleDelays)
+        assertEquals(listOf(60_000L), logger.rearmedMs)
+    }
+
+    @Test
+    fun rearmRemainingDelay_zeroRemaining_schedulesNothing() {
+        val scheduler = RecordingGraceWipeScheduler()
+        val logger = RecordingRearmLogger()
+
+        receiverWith(scheduler, logger).rearmRemainingDelay(context, deadline = 100_000L, now = 100_000L)
+
+        assertEquals(emptyList<Long>(), scheduler.scheduleDelays)
+        assertEquals(emptyList<Long>(), logger.rearmedMs)
+    }
+
+    @Test
+    fun rearmRemainingDelay_negativeRemaining_schedulesNothing() {
+        val scheduler = RecordingGraceWipeScheduler()
+        val logger = RecordingRearmLogger()
+
+        receiverWith(scheduler, logger).rearmRemainingDelay(context, deadline = 100_000L, now = 150_000L)
+
+        assertEquals(emptyList<Long>(), scheduler.scheduleDelays)
+        assertEquals(emptyList<Long>(), logger.rearmedMs)
     }
 }

@@ -20,9 +20,11 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
+import android.util.Log
 import com.airgate.data.repository.SecurityStateRepository
 import com.airgate.dhizuku.DhizukuManager
 import com.airgate.domain.model.SecurityState
+import com.airgate.engine.GraceWipeScheduler
 import com.airgate.engine.ThreatEngine
 
 /**
@@ -33,10 +35,16 @@ import com.airgate.engine.ThreatEngine
  * never consults the wall clock.
  */
 open class GraceWipeReceiver(
-    private val elapsedRealtimeProvider: () -> Long = { SystemClock.elapsedRealtime() }
+    private val elapsedRealtimeProvider: () -> Long = { SystemClock.elapsedRealtime() },
+    private val schedulerProvider: (Context) -> GraceWipeScheduler = { GraceWipeScheduler(it) },
+    private val rearmLogger: (Long) -> Unit = { remaining ->
+        Log.w(TAG, "Grace-wipe alarm fired early; re-arming for ${remaining}ms until the original deadline")
+    }
 ) : BroadcastReceiver() {
 
     companion object {
+        private const val TAG = "GraceWipeReceiver"
+
         const val ACTION = "com.airgate.action.GRACE_WIPE"
         const val EXTRA_DEADLINE = "com.airgate.extra.WIPE_DEADLINE"
 
@@ -74,6 +82,11 @@ open class GraceWipeReceiver(
      * app is still armed, the state is still [SecurityState.COUNTDOWN_WIPE], and
      * the deadline has elapsed on [now] (the monotonic clock). All comparisons
      * use [now], never the wall clock.
+     *
+     * If the alarm fires before the deadline (early delivery), the one-shot alarm
+     * is already spent, so instead of dropping the wipe the remaining delay is
+     * re-armed on the monotonic clock: the absolute deadline never moves, and a
+     * wipe that fires early can never be lost.
      */
     internal fun executeIfDeadlineReached(
         context: Context,
@@ -87,11 +100,28 @@ open class GraceWipeReceiver(
         val config = repository.getConfig()
         if (!config.isEnabled) return
         if (repository.getSecurityState() != SecurityState.COUNTDOWN_WIPE) return
-        if (shouldSkipWipe(deadline, now)) return
+        if (shouldSkipWipe(deadline, now)) {
+            rearmRemainingDelay(context, deadline, now)
+            return
+        }
 
         val dhizukuManager = DhizukuManager(context.applicationContext)
         val threatEngine = ThreatEngine(context.applicationContext, repository, dhizukuManager)
         threatEngine.executeWipeState(graceElapsed = true)
+    }
+
+    /**
+     * The alarm fired before the deadline. The wipe must still happen, so re-arm
+     * it for exactly the time remaining until the original deadline. A zero or
+     * negative remaining delay means the deadline is actually due and needs no
+     * re-arm.
+     */
+    internal fun rearmRemainingDelay(context: Context, deadline: Long, now: Long) {
+        val remaining = deadline - now
+        if (remaining > 0L) {
+            rearmLogger(remaining)
+            schedulerProvider(context.applicationContext).scheduleDelay(remaining)
+        }
     }
 
     /**

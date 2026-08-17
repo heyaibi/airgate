@@ -19,6 +19,7 @@ package com.airgate.engine
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -55,6 +56,17 @@ class GraceWipeSchedulerInstrumentedTest {
 
     private val context: Context
         get() = InstrumentationRegistry.getInstrumentation().targetContext
+
+    /** A scheduler that records re-arms instead of touching the real AlarmManager. */
+    private class RecordingGraceWipeScheduler : GraceWipeScheduler(
+        InstrumentationRegistry.getInstrumentation().targetContext,
+        { 0L }
+    ) {
+        val scheduleDelays = mutableListOf<Long>()
+        override fun scheduleDelay(delayMs: Long) {
+            scheduleDelays.add(delayMs)
+        }
+    }
 
     private fun realPrefs(): android.content.SharedPreferences {
         val prefs = context.getSharedPreferences(
@@ -112,6 +124,15 @@ class GraceWipeSchedulerInstrumentedTest {
         assertEquals(expected, state)
     }
 
+    /**
+     * A wipe that is legitimately skipped must stay skipped: give any would-be
+     * delayed execution a chance to fire, then assert the state is unchanged.
+     */
+    private fun awaitSettled(repository: SecurityStateRepository, expected: SecurityState) {
+        Thread.sleep(300)
+        assertEquals(expected, repository.getSecurityState())
+    }
+
     @Test
     fun scheduledWipeFiresAfterTheGraceWindowOnTheMonotonicClock() {
         val prefs = realPrefs()
@@ -134,6 +155,72 @@ class GraceWipeSchedulerInstrumentedTest {
                 "the wipe must fire on the monotonic deadline, scheduled at $deadline",
                 repository.getSecurityState() == SecurityState.WIPING
             )
+        } finally {
+            scheduler.cancel()
+            prefs.edit().clear().commit()
+        }
+    }
+
+    @Test
+    fun earlyFire_doesNotExecuteTheWipeAndRearms() {
+        // An alarm that fires before the grace deadline must not wipe early, and
+        // must re-arm the remaining delay (a spent one-shot alarm cannot lose the
+        // wipe). The receiver is dynamically registered so the broadcast delivery
+        // is real (goAsync() is valid) while a recording scheduler is injected to
+        // make the re-arm observable: if the re-arm were removed, no schedule
+        // would be recorded and the assertion below would fail.
+        val prefs = realPrefs()
+        val scheduler = GraceWipeScheduler(context)
+        val recording = RecordingGraceWipeScheduler()
+        try {
+            val (repository, _) = armedCountdown(prefs, graceSeconds = 2)
+
+            val now = SystemClock.elapsedRealtime()
+            val deadline = now + 60_000L
+
+            val receiver = object : GraceWipeReceiver(schedulerProvider = { recording }) {
+                override fun createRepository(context: Context): SecurityStateRepository = repository
+            }
+            context.registerReceiver(
+                receiver,
+                IntentFilter(GraceWipeReceiver.ACTION),
+                Context.RECEIVER_NOT_EXPORTED
+            )
+            try {
+                val intent = Intent().apply {
+                    action = GraceWipeReceiver.ACTION
+                    setPackage(context.packageName)
+                    putExtra(GraceWipeReceiver.EXTRA_DEADLINE, deadline)
+                }
+                context.sendBroadcast(intent)
+
+                // The broadcast is delivered asynchronously; wait until the re-arm
+                // has been recorded (or a short timeout elapses) before asserting.
+                val deliveryDeadline = System.currentTimeMillis() + 5_000
+                while (recording.scheduleDelays.isEmpty() && System.currentTimeMillis() < deliveryDeadline) {
+                    Thread.sleep(25)
+                }
+                awaitSettled(repository, SecurityState.COUNTDOWN_WIPE)
+
+                // The wipe must not have executed, and a re-arm for the remaining
+                // delay must have been scheduled. The remaining delay must be the
+                // near-full grace window still left until the original deadline (it
+                // re-arms the remainder rather than resetting the whole countdown),
+                // accounting for the small broadcast-delivery latency on-device.
+                assertEquals(1, recording.scheduleDelays.size)
+                val remaining = recording.scheduleDelays[0]
+                assertTrue(
+                    "remaining delay must be positive and no larger than the grace, was $remaining",
+                    remaining in 1..60_000
+                )
+                assertTrue(
+                    "the re-arm must cover the remaining window (near the full grace), was $remaining",
+                    remaining > 60_000 - 1_000
+                )
+                assertEquals(SecurityState.COUNTDOWN_WIPE, repository.getSecurityState())
+            } finally {
+                context.unregisterReceiver(receiver)
+            }
         } finally {
             scheduler.cancel()
             prefs.edit().clear().commit()

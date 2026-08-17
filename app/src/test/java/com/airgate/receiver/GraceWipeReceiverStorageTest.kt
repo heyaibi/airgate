@@ -24,6 +24,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.airgate.data.repository.SecurityStateRepository
 import com.airgate.domain.model.AppConfig
 import com.airgate.domain.model.SecurityState
+import com.airgate.engine.GraceWipeScheduler
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -74,6 +75,36 @@ class GraceWipeReceiverStorageTest {
         receiver.onReceive(context, intent)
     }
 
+    /** A scheduler that records re-arms instead of touching the real AlarmManager. */
+    private class RecordingGraceWipeScheduler : GraceWipeScheduler(
+        ApplicationProvider.getApplicationContext(),
+        { 0L }
+    ) {
+        val scheduleDelays = mutableListOf<Long>()
+        override fun scheduleDelay(delayMs: Long) {
+            scheduleDelays.add(delayMs)
+        }
+    }
+
+    /**
+     * Delivers the wipe broadcast with a future (not-yet-elapsed) deadline through
+     * a receiver whose re-arm lands on [scheduler], so the early-fire path is
+     * exercised end to end through the real onReceive/background-thread wiring.
+     */
+    private fun receiveEarly(
+        repository: SecurityStateRepository,
+        scheduler: RecordingGraceWipeScheduler,
+        deadline: Long
+    ) {
+        val receiver = object : GraceWipeReceiver(schedulerProvider = { scheduler }) {
+            override fun createRepository(context: Context): SecurityStateRepository = repository
+        }
+        val intent = Intent(context, GraceWipeReceiver::class.java)
+            .setAction(GraceWipeReceiver.ACTION)
+            .putExtra(GraceWipeReceiver.EXTRA_DEADLINE, deadline)
+        receiver.onReceive(context, intent)
+    }
+
     /**
      * onReceive enqueues the wipe onto a background thread and returns before the
      * wipe executes (it must never run on the main thread), so the WIPING outcome
@@ -109,6 +140,67 @@ class GraceWipeReceiverStorageTest {
         val futureDeadline = SystemClock.elapsedRealtime() + 60_000L
         receive(repository, deadline = futureDeadline)
         awaitSettled(repository, SecurityState.COUNTDOWN_WIPE)
+    }
+
+    @Test
+    fun earlyFire_rearmsTheRemainingDelayThroughTheRealReceiverPath() {
+        val repository = armCountdownRepository()
+        val scheduler = RecordingGraceWipeScheduler()
+        val now = SystemClock.elapsedRealtime()
+        val deadline = now + 60_000L
+
+        receiveEarly(repository, scheduler, deadline)
+        awaitSettled(repository, SecurityState.COUNTDOWN_WIPE)
+
+        assertEquals(1, scheduler.scheduleDelays.size)
+        val remaining = scheduler.scheduleDelays[0]
+        assertTrue("remaining delay must be positive and at most the grace, was $remaining", remaining in 1..60_000)
+        // The re-arm preserves the absolute deadline: now + remaining == the original deadline.
+        assertTrue(
+            "the re-armed deadline must equal the original, now=$now remaining=$remaining deadline=$deadline",
+            now + remaining in deadline - 1..deadline
+        )
+    }
+
+    @Test
+    fun earlyFire_disarmedState_doesNotRearm() {
+        val repository = armCountdownRepository()
+        repository.setSecurityState(SecurityState.ALARM_ACTIVE)
+        val scheduler = RecordingGraceWipeScheduler()
+
+        receiveEarly(repository, scheduler, SystemClock.elapsedRealtime() + 60_000L)
+        awaitSettled(repository, SecurityState.ALARM_ACTIVE)
+
+        assertEquals(emptyList<Long>(), scheduler.scheduleDelays)
+    }
+
+    @Test
+    fun earlyFire_disabledConfig_doesNotRearm() {
+        val repository = armCountdownRepository()
+        repository.saveConfig(AppConfig(isEnabled = false, dryRunMode = true))
+        repository.setSecurityState(SecurityState.COUNTDOWN_WIPE)
+        val scheduler = RecordingGraceWipeScheduler()
+
+        receiveEarly(repository, scheduler, SystemClock.elapsedRealtime() + 60_000L)
+        awaitSettled(repository, SecurityState.COUNTDOWN_WIPE)
+
+        assertEquals(emptyList<Long>(), scheduler.scheduleDelays)
+    }
+
+    @Test
+    fun earlyFire_wrongAction_doesNotRearm() {
+        val repository = armCountdownRepository()
+        val scheduler = RecordingGraceWipeScheduler()
+        val receiver = object : GraceWipeReceiver(schedulerProvider = { scheduler }) {
+            override fun createRepository(context: Context): SecurityStateRepository = repository
+        }
+        val intent = Intent(context, GraceWipeReceiver::class.java)
+            .setAction("com.example.OTHER_ACTION")
+            .putExtra(GraceWipeReceiver.EXTRA_DEADLINE, SystemClock.elapsedRealtime() + 60_000L)
+        receiver.onReceive(context, intent)
+        awaitSettled(repository, SecurityState.COUNTDOWN_WIPE)
+
+        assertEquals(emptyList<Long>(), scheduler.scheduleDelays)
     }
 
     @Test
