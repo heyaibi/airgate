@@ -35,8 +35,20 @@ internal sealed class PinGateDecision {
      */
     data object PinUnreadable : PinGateDecision()
 
-    /** PIN material is available; the typed PIN must be verified against it. */
-    data class Verify(val expectedHash: ByteArray, val salt: ByteArray) : PinGateDecision()
+    /**
+     * PIN material is available; the typed PIN must be verified against it.
+     *
+     * @property expectedHash the stored derived key
+     * @property salt the per-install salt
+     * @property iterations the PBKDF2 iteration count used to produce [expectedHash]
+     * @property algorithm the PBKDF2 algorithm name used to produce [expectedHash]
+     */
+    data class Verify(
+        val expectedHash: ByteArray,
+        val salt: ByteArray,
+        val iterations: Int,
+        val algorithm: String
+    ) : PinGateDecision()
 }
 
 /**
@@ -45,12 +57,17 @@ internal sealed class PinGateDecision {
  * Returns [PinGateDecision.NoPinConfigured] when no PIN is on file,
  * [PinGateDecision.PinUnreadable] when a PIN exists but its material cannot be
  * read (never treated as authorization), and [PinGateDecision.Verify] with the
- * stored hash/salt when verification should proceed.
+ * stored hash/salt/iterations/algorithm when verification should proceed.
  */
 internal fun resolvePinGate(repository: SecurityStateRepository): PinGateDecision {
     if (!repository.isPinSet()) return PinGateDecision.NoPinConfigured
     val pinData = repository.getPinData() ?: return PinGateDecision.PinUnreadable
-    return PinGateDecision.Verify(pinData.first, pinData.second)
+    return PinGateDecision.Verify(
+        expectedHash = pinData.hash,
+        salt = pinData.salt,
+        iterations = pinData.iterations,
+        algorithm = pinData.algorithm
+    )
 }
 
 /**
@@ -84,14 +101,14 @@ internal sealed class AuthPinSubmitDecision {
  */
 internal fun decideAuthPinSubmit(
     repository: SecurityStateRepository,
-    verifyPin: (String, ByteArray, ByteArray) -> Boolean,
+    verifyPin: (String, ByteArray, ByteArray, Int, String) -> Boolean,
     typedPin: String
 ): AuthPinSubmitDecision {
     return when (val decision = resolvePinGate(repository)) {
         is PinGateDecision.NoPinConfigured -> AuthPinSubmitDecision.NoPinConfigured
         is PinGateDecision.PinUnreadable -> AuthPinSubmitDecision.PinUnreadable
         is PinGateDecision.Verify ->
-            if (verifyPin(typedPin, decision.salt, decision.expectedHash)) {
+            if (verifyPin(typedPin, decision.salt, decision.expectedHash, decision.iterations, decision.algorithm)) {
                 AuthPinSubmitDecision.Unlock
             } else {
                 AuthPinSubmitDecision.IncorrectPin

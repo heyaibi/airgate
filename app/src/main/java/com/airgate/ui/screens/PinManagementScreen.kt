@@ -213,7 +213,12 @@ fun PinManagementScreen(
                         scope.launch {
                             val salt = withContext(Dispatchers.Default) { pinManager.generateSalt() }
                             val hash = withContext(Dispatchers.Default) { pinManager.hashPin(newPin, salt) }
-                            repository.savePin(hash, salt)
+                            repository.savePin(
+                                hash,
+                                salt,
+                                PinManager.DEFAULT_ITERATIONS,
+                                PinManager.DEFAULT_ALGORITHM
+                            )
 
                             isSubmitting = false
                             newPinText = ""

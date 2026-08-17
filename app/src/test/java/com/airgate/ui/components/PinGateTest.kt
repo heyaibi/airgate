@@ -17,6 +17,7 @@
 package com.airgate.ui.components
 
 import com.airgate.data.crypto.JvmPrefsCrypto
+import com.airgate.data.crypto.PinManager
 import com.airgate.data.repository.SecurityStateRepository
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -78,7 +79,7 @@ class PinGateTest {
     fun `configured pin with readable material resolves to Verify`() {
         val hash = byteArrayOf(1, 2, 3, 4, 5)
         val salt = byteArrayOf(6, 7, 8, 9)
-        repository.savePin(hash, salt)
+        repository.savePin(hash, salt, PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
 
         val decision = resolvePinGate(repository)
 
@@ -116,11 +117,11 @@ class PinGateTest {
         val pinManager = com.airgate.data.crypto.PinManager()
         val salt = byteArrayOf(6, 7, 8, 9)
         val hash = pinManager.hashPin("123456", salt)
-        repository.savePin(hash, salt)
+        repository.savePin(hash, salt, PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
 
         val decision = resolvePinGate(repository) as PinGateDecision.Verify
 
-        assertTrue(pinManager.verifyPin("123456", decision.salt, decision.expectedHash))
+        assertTrue(pinManager.verifyPin("123456", decision.salt, decision.expectedHash, decision.iterations, decision.algorithm))
     }
 
     @Test
@@ -128,10 +129,10 @@ class PinGateTest {
         val pinManager = com.airgate.data.crypto.PinManager()
         val salt = byteArrayOf(6, 7, 8, 9)
         val hash = pinManager.hashPin("123456", salt)
-        repository.savePin(hash, salt)
+        repository.savePin(hash, salt, PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
 
         val decision = resolvePinGate(repository) as PinGateDecision.Verify
 
-        assertFalse(pinManager.verifyPin("000000", decision.salt, decision.expectedHash))
+        assertFalse(pinManager.verifyPin("000000", decision.salt, decision.expectedHash, decision.iterations, decision.algorithm))
     }
 }

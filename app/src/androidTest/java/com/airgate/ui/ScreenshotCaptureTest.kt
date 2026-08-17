@@ -173,7 +173,7 @@ class ScreenshotCaptureTest {
         val pinManager = PinManager()
         val salt = pinManager.generateSalt()
         val hash = pinManager.hashPin(PIN, salt)
-        repository.savePin(hash, salt)
+        repository.savePin(hash, salt, PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
 
         repository.setSecurityState(SecurityState.ARMED_COMPLIANT)
         repository.setStreak(2)

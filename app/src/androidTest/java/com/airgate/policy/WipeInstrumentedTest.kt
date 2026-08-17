@@ -24,6 +24,7 @@ import com.airgate.dhizuku.DhizukuManager
 import com.airgate.domain.model.AppConfig
 import com.airgate.domain.model.SecurityState
 import com.airgate.domain.model.WipeResult
+import com.airgate.data.crypto.PinManager
 import com.airgate.engine.ThreatEngine
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -55,7 +56,7 @@ class WipeInstrumentedTest {
         )
         prefs.edit().clear().commit()
         val repository = SecurityStateRepository(prefs)
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         return repository
     }
 

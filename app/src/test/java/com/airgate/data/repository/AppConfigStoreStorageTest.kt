@@ -19,6 +19,7 @@ package com.airgate.data.repository
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.airgate.data.crypto.PinManager
 import com.airgate.domain.model.AppConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -51,7 +52,7 @@ class AppConfigStoreStorageTest {
     fun savingConfig_neverWritesTheRemovedSettingKey_onRealStorage() {
         val prefs = newPrefs()
         val repository = SecurityStateRepository(prefs, null, notificationsAllowedProvider = { true })
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
 
         repository.saveConfig(AppConfig(wipeThreshold = 5))
 
@@ -68,7 +69,7 @@ class AppConfigStoreStorageTest {
         assertTrue("the legacy value must be present before the save", prefs.contains(legacyKey))
 
         val repository = SecurityStateRepository(prefs, null, notificationsAllowedProvider = { true })
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         repository.saveConfig(AppConfig())
 
         assertFalse("saving config must purge the legacy value on the JVM", prefs.contains(legacyKey))
@@ -78,7 +79,7 @@ class AppConfigStoreStorageTest {
     fun aLegacyValue_doesNotDisturbConfigReads_onRealStorage() {
         val prefs = newPrefs()
         val repository = SecurityStateRepository(prefs, null, notificationsAllowedProvider = { true })
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         repository.saveConfig(AppConfig(wipeThreshold = 7))
 
         ProtectedPrefsStore(prefs, null).protectedPutBoolean(legacyKey, true)

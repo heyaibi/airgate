@@ -18,6 +18,7 @@ package com.airgate.defense
 
 import android.content.ContextWrapper
 import com.airgate.data.crypto.JvmPrefsCrypto
+import com.airgate.data.crypto.PinManager
 import com.airgate.data.repository.SecurityStateRepository
 import com.airgate.dhizuku.DhizukuBinderWrapper
 import com.airgate.dhizuku.DhizukuManager
@@ -93,7 +94,7 @@ class Phase6DefenseTest {
         val prefs = MockSharedPreferences()
         repository = SecurityStateRepository(prefs, JvmPrefsCrypto())
         // The watchdog may only be armed after a PIN is configured.
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         repository.saveConfig(
             AppConfig(
                 isEnabled = true,

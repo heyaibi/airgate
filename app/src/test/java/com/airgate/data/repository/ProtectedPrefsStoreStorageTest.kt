@@ -20,6 +20,7 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.airgate.data.crypto.KeystoreManager
+import com.airgate.data.crypto.PinManager
 import com.airgate.data.crypto.PrefsCrypto
 import com.airgate.domain.model.SecurityState
 import org.junit.Assert.assertEquals
@@ -193,7 +194,7 @@ class ProtectedPrefsStoreStorageTest {
         // app reads it as disabled (its decrypt default) — and that read itself
         // must latch the tamper flag the audit then escalates.
         val (repository, prefs) = repositoryAndPrefs()
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         repository.saveConfig(
             com.airgate.domain.model.AppConfig(isEnabled = true, dryRunMode = true)
         )
@@ -436,7 +437,7 @@ class ProtectedPrefsStoreStorageTest {
         val prefs = throwawayPrefs()
         val repository = SecurityStateRepository(prefs, ThrowingPrefsCrypto())
 
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
 
         assertNull("a failed PIN write must never persist the hash in plaintext", prefs.getString("pin_hash", null))
         assertNull("a failed PIN write must never persist the salt in plaintext", prefs.getString("pin_salt", null))

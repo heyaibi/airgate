@@ -323,7 +323,7 @@ class AuthPinScreenTest {
         val pinManager = PinManager()
         val salt = pinManager.generateSalt()
         val hash = pinManager.hashPin(pin, salt)
-        repository.savePin(hash, salt)
+        repository.savePin(hash, salt, PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
     }
 
     private fun launchScreen(repository: SecurityStateRepository, onAuthenticated: () -> Unit) {

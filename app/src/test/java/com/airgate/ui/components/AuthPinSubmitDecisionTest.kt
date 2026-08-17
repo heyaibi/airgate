@@ -41,8 +41,8 @@ class AuthPinSubmitDecisionTest {
     private val prefs = InMemorySharedPreferences()
     private val repository = SecurityStateRepository(prefs, JvmPrefsCrypto()) { 0L }
 
-    private val acceptAll: (String, ByteArray, ByteArray) -> Boolean = { _, _, _ -> true }
-    private val rejectAll: (String, ByteArray, ByteArray) -> Boolean = { _, _, _ -> false }
+    private val acceptAll: (String, ByteArray, ByteArray, Int, String) -> Boolean = { _, _, _, _, _ -> true }
+    private val rejectAll: (String, ByteArray, ByteArray, Int, String) -> Boolean = { _, _, _, _, _ -> false }
 
     private fun corruptPinMaterial() {
         prefs.edit()
@@ -54,7 +54,7 @@ class AuthPinSubmitDecisionTest {
     private fun setReadablePin(pin: String = "123456") {
         val pinManager = PinManager()
         val salt = pinManager.generateSalt()
-        repository.savePin(pinManager.hashPin(pin, salt), salt)
+        repository.savePin(pinManager.hashPin(pin, salt), salt, PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
     }
 
     @Test
@@ -69,7 +69,7 @@ class AuthPinSubmitDecisionTest {
     @Test
     fun `no configured pin never reaches verification`() {
         var verified = false
-        val spy: (String, ByteArray, ByteArray) -> Boolean = { _, _, _ ->
+        val spy: (String, ByteArray, ByteArray, Int, String) -> Boolean = { _, _, _, _, _ ->
             verified = true
             true
         }
@@ -95,7 +95,7 @@ class AuthPinSubmitDecisionTest {
     fun `unreadable pin material never verifies against an empty hash`() {
         corruptPinMaterial()
         var verified = false
-        val spy: (String, ByteArray, ByteArray) -> Boolean = { _, _, _ ->
+        val spy: (String, ByteArray, ByteArray, Int, String) -> Boolean = { _, _, _, _, _ ->
             verified = true
             true
         }
@@ -190,11 +190,11 @@ class AuthPinSubmitDecisionTest {
         val pinManager = PinManager()
         val salt = pinManager.generateSalt()
         val hash = pinManager.hashPin("246810", salt)
-        repository.savePin(hash, salt)
+        repository.savePin(hash, salt, PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
 
         var capturedSalt: ByteArray? = null
         var capturedHash: ByteArray? = null
-        val spy: (String, ByteArray, ByteArray) -> Boolean = { _, s, h ->
+        val spy: (String, ByteArray, ByteArray, Int, String) -> Boolean = { _, s, h, _, _ ->
             capturedSalt = s
             capturedHash = h
             true

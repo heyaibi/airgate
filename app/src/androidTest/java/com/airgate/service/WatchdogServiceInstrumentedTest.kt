@@ -24,6 +24,7 @@ import android.os.SystemClock
 import android.provider.Settings
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.airgate.data.crypto.PinManager
 import com.airgate.data.repository.SecurityStateRepository
 import com.airgate.domain.model.AppConfig
 import com.airgate.domain.model.ViolationType
@@ -72,7 +73,7 @@ class WatchdogServiceInstrumentedTest {
             // Clean state + arm the watchdog so the poll's breach is recorded.
             repo.resetStreak()
             repo.setVtCount(ViolationType.AIRPLANE_MODE_OFF, 0)
-            repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+            repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
             assertTrue(
                 "arming must succeed so the poll's breach is enforced",
                 repo.saveConfig(AppConfig(isEnabled = true)).isEnabled

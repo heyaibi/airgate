@@ -20,6 +20,7 @@ import android.content.ComponentName
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.airgate.data.crypto.PinManager
 import com.airgate.data.repository.SecurityStateRepository
 import com.airgate.dhizuku.DhizukuBinderWrapper
 import com.airgate.dhizuku.DhizukuManager
@@ -65,7 +66,7 @@ class ThreatScoringStorageTest {
         )
         prefs.edit().clear().commit()
         val repository = SecurityStateRepository(prefs)
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         return repository
     }
 

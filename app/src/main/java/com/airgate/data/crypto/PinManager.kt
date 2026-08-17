@@ -16,16 +16,19 @@
 
 package com.airgate.data.crypto
 
+import java.security.MessageDigest
 import java.security.SecureRandom
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 
 class PinManager(
-    private val iterations: Int = 120_000,
-    private val keyLengthBits: Int = 256
+    private val iterations: Int = DEFAULT_ITERATIONS,
+    private val keyLengthBits: Int = DEFAULT_KEY_LENGTH_BITS
 ) {
     companion object {
-        private const val ALGORITHM = "PBKDF2WithHmacSHA256"
+        const val DEFAULT_ALGORITHM = "PBKDF2WithHmacSHA256"
+        const val DEFAULT_ITERATIONS = 120_000
+        const val DEFAULT_KEY_LENGTH_BITS = 256
         private const val SALT_LENGTH_BYTES = 16
     }
 
@@ -36,11 +39,16 @@ class PinManager(
         return salt
     }
 
-    fun hashPin(pin: String, salt: ByteArray): ByteArray {
+    fun hashPin(
+        pin: String,
+        salt: ByteArray,
+        iterations: Int = this.iterations,
+        algorithm: String = DEFAULT_ALGORITHM
+    ): ByteArray {
         require(pin.length >= 6) { "PIN must be at least 6 digits/characters" }
         val spec = PBEKeySpec(pin.toCharArray(), salt, iterations, keyLengthBits)
         try {
-            val factory = SecretKeyFactory.getInstance(ALGORITHM)
+            val factory = SecretKeyFactory.getInstance(algorithm)
             return factory.generateSecret(spec).encoded
         } finally {
             // The derived key material is held in memory; clearing the PBEKeySpec
@@ -49,14 +57,15 @@ class PinManager(
         }
     }
 
-    fun verifyPin(pin: String, salt: ByteArray, expectedHash: ByteArray): Boolean {
+    fun verifyPin(
+        pin: String,
+        salt: ByteArray,
+        expectedHash: ByteArray,
+        iterations: Int = this.iterations,
+        algorithm: String = DEFAULT_ALGORITHM
+    ): Boolean {
         if (pin.length < 6) return false
-        val computedHash = hashPin(pin, salt)
-        if (computedHash.size != expectedHash.size) return false
-        var result = 0
-        for (i in computedHash.indices) {
-            result = result or (computedHash[i].toInt() xor expectedHash[i].toInt())
-        }
-        return result == 0
+        val computedHash = hashPin(pin, salt, iterations, algorithm)
+        return MessageDigest.isEqual(computedHash, expectedHash)
     }
 }

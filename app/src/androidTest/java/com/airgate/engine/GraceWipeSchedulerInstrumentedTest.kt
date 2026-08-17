@@ -23,6 +23,7 @@ import android.content.IntentFilter
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.airgate.data.crypto.PinManager
 import com.airgate.data.repository.SecurityStateRepository
 import com.airgate.dhizuku.DhizukuManager
 import com.airgate.domain.model.AppConfig
@@ -90,7 +91,7 @@ class GraceWipeSchedulerInstrumentedTest {
         graceSeconds: Int
     ): Pair<SecurityStateRepository, AppConfig> {
         val repository = SecurityStateRepository(prefs, null, notificationsAllowedProvider = { true })
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         val config = repository.saveConfig(
             AppConfig(isEnabled = true, dryRunMode = true, graceWindowSeconds = graceSeconds)
         )
@@ -323,7 +324,7 @@ class GraceWipeSchedulerInstrumentedTest {
         val prefs = realPrefs()
         try {
             val repository = SecurityStateRepository(prefs, null, notificationsAllowedProvider = { true })
-            repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+            repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
             repository.saveConfig(
                 AppConfig(isEnabled = true, dryRunMode = true, graceWindowSeconds = 60)
             )
@@ -369,7 +370,7 @@ class GraceWipeSchedulerInstrumentedTest {
         val scheduler = RecordingGraceWipeScheduler()
         try {
             val repository = SecurityStateRepository(prefs, null, notificationsAllowedProvider = { true })
-            repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+            repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
             repository.saveConfig(
                 AppConfig(isEnabled = true, dryRunMode = true, graceWindowSeconds = 1)
             )

@@ -51,12 +51,12 @@ class AuthPinRecoveryRepositoryTest {
         val pinManager = PinManager()
         val salt = pinManager.generateSalt()
         val hash = pinManager.hashPin("135790", salt)
-        repository.savePin(hash, salt)
+        repository.savePin(hash, salt, PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
 
         assertTrue(repository.isPinUsable())
         val data = repository.getPinData()
-        assertEquals(hash.toList(), data?.first?.toList())
-        assertEquals(salt.toList(), data?.second?.toList())
+        assertEquals(hash.toList(), data?.hash?.toList())
+        assertEquals(salt.toList(), data?.salt?.toList())
     }
 
     @Test
@@ -67,11 +67,11 @@ class AuthPinRecoveryRepositoryTest {
         val pinManager = PinManager()
         val salt = pinManager.generateSalt()
         val hash = pinManager.hashPin("135790", salt)
-        repository.savePin(hash, salt)
+        repository.savePin(hash, salt, PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
 
         assertTrue(
             "the re-provisioned PIN must unlock",
-            pinManager.verifyPin("135790", salt, hash)
+            pinManager.verifyPin("135790", salt, hash, PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         )
     }
 
@@ -85,11 +85,11 @@ class AuthPinRecoveryRepositoryTest {
         val pinManager = PinManager()
         val salt = pinManager.generateSalt()
         val hash = pinManager.hashPin("135790", salt)
-        repository.savePin(hash, salt)
+        repository.savePin(hash, salt, PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
 
         val replaced = repository.getPinData()
-        assertTrue("the new material must differ from the old", replaced!!.first.toList() != original?.first?.toList())
-        assertTrue(pinManager.verifyPin("135790", replaced.second, replaced.first))
+        assertTrue("the new material must differ from the old", replaced!!.hash.toList() != original?.hash?.toList())
+        assertTrue(pinManager.verifyPin("135790", replaced.salt, replaced.hash, PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM))
     }
 
     @Test
@@ -116,7 +116,7 @@ class AuthPinRecoveryRepositoryTest {
         val pinManager = PinManager()
         val salt = pinManager.generateSalt()
         val hash = pinManager.hashPin("135790", salt)
-        repository.savePin(hash, salt)
+        repository.savePin(hash, salt, PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         repository.resetPinFailedAttempts()
         repository.setPinLockoutUntil(0L)
 
@@ -137,15 +137,15 @@ class AuthPinRecoveryRepositoryTest {
         val salt = pinManager.generateSalt()
         val hash = pinManager.hashPin("135790", salt)
 
-        repository.savePin(hash, salt)
+        repository.savePin(hash, salt, PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
 
         assertTrue(repository.isPinUsable())
-        assertTrue(pinManager.verifyPin("135790", salt, hash))
+        assertTrue(pinManager.verifyPin("135790", salt, hash, PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM))
     }
 
     private fun setReadablePin(pin: String = "246810") {
         val pinManager = PinManager()
         val salt = pinManager.generateSalt()
-        repository.savePin(pinManager.hashPin(pin, salt), salt)
+        repository.savePin(pinManager.hashPin(pin, salt), salt, PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
     }
 }

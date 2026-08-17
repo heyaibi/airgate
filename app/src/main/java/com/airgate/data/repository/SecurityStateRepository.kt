@@ -109,9 +109,10 @@ class SecurityStateRepository(
         return getPinData() != null
     }
 
-    fun savePin(pinHash: ByteArray, salt: ByteArray) = pinStore.savePin(pinHash, salt)
+    fun savePin(pinHash: ByteArray, salt: ByteArray, iterations: Int, algorithm: String) =
+        pinStore.savePin(pinHash, salt, iterations, algorithm)
 
-    fun getPinData(): Pair<ByteArray, ByteArray>? = pinStore.getPinData()
+    fun getPinData(): PinData? = pinStore.getPinData()
 
     fun getPinFailedAttempts(): Int = pinStore.getPinFailedAttempts()
 

@@ -17,6 +17,7 @@
 package com.airgate.data.repository
 
 import com.airgate.data.crypto.JvmPrefsCrypto
+import com.airgate.data.crypto.PinManager
 import com.airgate.data.crypto.PrefsCrypto
 import com.airgate.domain.model.AppConfig
 import com.airgate.domain.model.PendingAlarm
@@ -90,12 +91,12 @@ class SecurityStateRepositoryTest {
     fun `save and verify pin metadata`() {
         val hash = byteArrayOf(1, 2, 3, 4)
         val salt = byteArrayOf(5, 6, 7, 8)
-        repository.savePin(hash, salt)
+        repository.savePin(hash, salt, PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
 
         assertTrue(repository.isPinSet())
         val pinData = repository.getPinData()
-        assertEquals(hash.toList(), pinData?.first?.toList())
-        assertEquals(salt.toList(), pinData?.second?.toList())
+        assertEquals(hash.toList(), pinData?.hash?.toList())
+        assertEquals(salt.toList(), pinData?.salt?.toList())
     }
 
     @Test
@@ -113,7 +114,7 @@ class SecurityStateRepositoryTest {
 
     @Test
     fun `save and load config update`() {
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         val updatedConfig = AppConfig.aggressivePreset()
         repository.saveConfig(updatedConfig)
 
@@ -127,7 +128,7 @@ class SecurityStateRepositoryTest {
 
     @Test
     fun `aggressive preset save leaves no removed-setting key persisted`() {
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         repository.saveConfig(AppConfig.aggressivePreset())
 
         assertFalse(
@@ -144,7 +145,7 @@ class SecurityStateRepositoryTest {
         legacyStore.protectedPutBoolean("config_user_unlock_resets", true)
         assertTrue(prefs.contains("config_user_unlock_resets"))
 
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         repository.saveConfig(AppConfig(wipeThreshold = 5))
 
         assertFalse(
@@ -167,7 +168,7 @@ class SecurityStateRepositoryTest {
 
     @Test
     fun `watchdog can be enabled once a PIN is configured`() {
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
 
         val requested = repository.saveConfig(AppConfig(isEnabled = true))
         assertTrue(requested.isEnabled)
@@ -182,7 +183,7 @@ class SecurityStateRepositoryTest {
 
     @Test
     fun `isPinUsable is true when PIN material is readable`() {
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
 
         assertTrue(repository.isPinSet())
         assertTrue(repository.isPinUsable())
@@ -239,7 +240,7 @@ class SecurityStateRepositoryTest {
         // becomes unreadable after arming (tamper/corruption), a later config save
         // must coerce the device back to disabled so the owner is never left
         // armed-but-unable-to-disarm.
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         assertTrue(repository.saveConfig(AppConfig(isEnabled = true)).isEnabled)
         assertTrue(repository.getConfig().isEnabled)
 
@@ -278,7 +279,7 @@ class SecurityStateRepositoryTest {
 
     @Test
     fun `enabling with a usable PIN preserves the rest of the config`() {
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         val requested = repository.saveConfig(
             AppConfig(isEnabled = true, wipeThreshold = 5, dryRunMode = false)
         )
@@ -453,7 +454,7 @@ class SecurityStateRepositoryTest {
 
     @Test
     fun `watchdog cannot be newly enabled when notifications are not allowed`() {
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         val denied = SecurityStateRepository(prefs, JvmPrefsCrypto(), notificationsAllowedProvider = { false })
 
         val requested = denied.saveConfig(AppConfig(isEnabled = true))
@@ -465,7 +466,7 @@ class SecurityStateRepositoryTest {
 
     @Test
     fun `watchdog can be newly enabled when the PIN is set and notifications are allowed`() {
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         val allowed = SecurityStateRepository(prefs, JvmPrefsCrypto(), notificationsAllowedProvider = { true })
 
         val requested = allowed.saveConfig(AppConfig(isEnabled = true))
@@ -485,7 +486,7 @@ class SecurityStateRepositoryTest {
     fun `an already-armed device stays armed when notifications are later revoked`() {
         // The notification gate guards the act of arming, not continued operation:
         // revoking notifications must not silently disarm a live device.
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         val allowed = SecurityStateRepository(prefs, JvmPrefsCrypto(), notificationsAllowedProvider = { true })
         assertTrue(allowed.saveConfig(AppConfig(isEnabled = true)).isEnabled)
 
@@ -508,7 +509,7 @@ class SecurityStateRepositoryTest {
 
     @Test
     fun `watchdog cannot be newly enabled when bluetooth connect is not allowed`() {
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         val denied = SecurityStateRepository(prefs, JvmPrefsCrypto(), bluetoothConnectAllowedProvider = { false })
 
         val requested = denied.saveConfig(AppConfig(isEnabled = true))
@@ -521,7 +522,7 @@ class SecurityStateRepositoryTest {
 
     @Test
     fun `watchdog can be newly enabled when the PIN is set and bluetooth connect is allowed`() {
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         val allowed = SecurityStateRepository(prefs, JvmPrefsCrypto(), bluetoothConnectAllowedProvider = { true })
 
         val requested = allowed.saveConfig(AppConfig(isEnabled = true))
@@ -531,7 +532,7 @@ class SecurityStateRepositoryTest {
 
     @Test
     fun `arming requires both notifications and bluetooth connect`() {
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         val notificationsAllowed = SecurityStateRepository(
             prefs, JvmPrefsCrypto(),
             notificationsAllowedProvider = { true },
@@ -559,7 +560,7 @@ class SecurityStateRepositoryTest {
     fun `an already-armed device stays armed when bluetooth connect is later revoked`() {
         // The bluetooth gate guards the act of arming, not continued operation:
         // revoking the grant must not silently disarm a live device.
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         val allowed = SecurityStateRepository(prefs, JvmPrefsCrypto(), bluetoothConnectAllowedProvider = { true })
         assertTrue(allowed.saveConfig(AppConfig(isEnabled = true)).isEnabled)
 
@@ -630,7 +631,7 @@ class SecurityStateRepositoryTest {
 
     @Test
     fun `resetStreak clears the pending alarm`() {
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         repository.setPendingAlarm(PendingAlarm("USB", "USB device connected", 5L, isCountdown = false))
         assertNotNull(repository.getPendingAlarm())
 
@@ -811,7 +812,7 @@ class SecurityStateRepositoryTest {
         // persist anything — a plaintext PIN hash/salt would be the worst leak.
         val broken = SecurityStateRepository(prefs, FailingPrefsCrypto())
 
-        broken.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        broken.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
 
         assertFalse("with nothing persisted the PIN cannot be set", broken.isPinSet())
         assertFalse(broken.isPinUsable())

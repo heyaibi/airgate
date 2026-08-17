@@ -20,6 +20,7 @@ import android.content.Context
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.airgate.BuildConfig
+import com.airgate.data.crypto.PinManager
 import com.airgate.data.repository.SecurityStateRepository
 import com.airgate.dhizuku.DhizukuManager
 import com.airgate.domain.model.AppConfig
@@ -102,7 +103,7 @@ class SelfDefenseSignatureInstrumentedTest {
     @Test
     fun mismatchedPinnedHash_detectsTamperOnDevice() {
         val repository = throwawayRepository().also {
-            it.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+            it.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
             it.saveConfig(
                 AppConfig(
                     isEnabled = false,
@@ -130,7 +131,7 @@ class SelfDefenseSignatureInstrumentedTest {
     @Test
     fun unpinnedManager_failsClosedOnDevice() {
         val repository = throwawayRepository().also {
-            it.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+            it.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
             it.saveConfig(
                 AppConfig(
                     isEnabled = true,

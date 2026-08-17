@@ -145,7 +145,13 @@ fun PinVerifyDialog(
                             isVerifying = true
                             scope.launch {
                                 val ok = withContext(Dispatchers.Default) {
-                                    pinManager.verifyPin(pinToVerify, decision.salt, decision.expectedHash)
+                                    pinManager.verifyPin(
+                                        pinToVerify,
+                                        decision.salt,
+                                        decision.expectedHash,
+                                        decision.iterations,
+                                        decision.algorithm
+                                    )
                                 }
                                 isVerifying = false
                                 if (ok) {

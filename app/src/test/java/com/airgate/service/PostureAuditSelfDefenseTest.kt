@@ -19,6 +19,7 @@ package com.airgate.service
 import android.content.ContextWrapper
 import com.airgate.BuildConfig
 import com.airgate.data.crypto.JvmPrefsCrypto
+import com.airgate.data.crypto.PinManager
 import com.airgate.data.repository.SecurityStateRepository
 import com.airgate.defense.SelfDefenseManager
 import com.airgate.dhizuku.DhizukuBinderWrapper
@@ -104,7 +105,7 @@ class PostureAuditSelfDefenseTest {
         prefs = MockSharedPreferences()
         repository = SecurityStateRepository(prefs, JvmPrefsCrypto())
         // The watchdog may only be armed after a PIN is configured.
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         mockBinder = MockDhizukuBinder(isGranted = true)
         dhizukuManager = DhizukuManager(dummyContext, mockBinder)
         threatEngine = ThreatEngine(dummyContext, repository, dhizukuManager)
@@ -614,7 +615,7 @@ class PostureAuditSelfDefenseTest {
 
         assertTrue(audit.checkTamperOnly())
 
-        repository.savePin(byteArrayOf(9, 8, 7), byteArrayOf(6, 5))
+        repository.savePin(byteArrayOf(9, 8, 7), byteArrayOf(6, 5), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         assertTrue(repository.isPinUsable())
         assertFalse(audit.checkTamperOnly())
     }

@@ -18,6 +18,7 @@ package com.airgate.receiver
 
 import android.content.Context
 import com.airgate.data.crypto.JvmPrefsCrypto
+import com.airgate.data.crypto.PinManager
 import com.airgate.data.repository.SecurityStateRepository
 import com.airgate.domain.model.AppConfig
 import com.airgate.domain.model.SecurityState
@@ -58,7 +59,7 @@ class GraceWipeReceiverTest {
 
     private fun countdownRepository(): SecurityStateRepository {
         val repository = SecurityStateRepository(prefs, JvmPrefsCrypto(), { true }) { 0L }
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         repository.saveConfig(
             AppConfig(isEnabled = true, dryRunMode = true, graceWindowSeconds = 0)
         )

@@ -20,6 +20,7 @@ import android.app.AlarmManager
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.airgate.data.crypto.PinManager
 import com.airgate.data.repository.SecurityStateRepository
 import com.airgate.domain.model.AppConfig
 import com.airgate.testutil.crypto.AndroidKeyStoreRule
@@ -76,7 +77,7 @@ class SafetyNetSchedulerTest {
     @Test
     fun schedule_doesNothingWhenAlarmAlreadyPending() {
         val repo = SecurityStateRepository(prefs)
-        repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         repo.saveConfig(AppConfig(isEnabled = true, safetyNetIntervalMinutes = 5))
 
         SafetyNetScheduler.isScheduled = { true }
@@ -94,7 +95,7 @@ class SafetyNetSchedulerTest {
     @Test
     fun schedule_setsAlarmWhenNotPending() {
         val repo = SecurityStateRepository(prefs)
-        repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         repo.saveConfig(AppConfig(isEnabled = true, safetyNetIntervalMinutes = 5))
 
         SafetyNetScheduler.isScheduled = { false }
@@ -112,7 +113,7 @@ class SafetyNetSchedulerTest {
     @Test
     fun schedule_repeatsDoNotResetTimer() {
         val repo = SecurityStateRepository(prefs)
-        repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         repo.saveConfig(AppConfig(isEnabled = true, safetyNetIntervalMinutes = 5))
 
         var scheduled = false
@@ -143,7 +144,7 @@ class SafetyNetSchedulerTest {
     @Test
     fun schedule_noOpWhenDisabled() {
         val repo = SecurityStateRepository(prefs)
-        repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         repo.saveConfig(AppConfig(isEnabled = false, safetyNetIntervalMinutes = 5))
 
         SafetyNetScheduler.isScheduled = { false }
@@ -161,7 +162,7 @@ class SafetyNetSchedulerTest {
     @Test
     fun schedule_enforcesMinimumInterval() {
         val repo = SecurityStateRepository(prefs)
-        repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         repo.saveConfig(AppConfig(isEnabled = true, safetyNetIntervalMinutes = 0))
 
         SafetyNetScheduler.isScheduled = { false }
@@ -183,7 +184,7 @@ class SafetyNetSchedulerTest {
     @Test
     fun schedule_usesConfiguredInterval() {
         val repo = SecurityStateRepository(prefs)
-        repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         repo.saveConfig(AppConfig(isEnabled = true, safetyNetIntervalMinutes = 15))
 
         SafetyNetScheduler.isScheduled = { false }
@@ -207,7 +208,7 @@ class SafetyNetSchedulerTest {
     @Test
     fun cancel_removesAlarm() {
         val repo = SecurityStateRepository(prefs)
-        repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         repo.saveConfig(AppConfig(isEnabled = true, safetyNetIntervalMinutes = 5))
 
         SafetyNetScheduler.isScheduled = { false }
@@ -230,7 +231,7 @@ class SafetyNetSchedulerTest {
     @Test
     fun schedule_afterCancel_resumesScheduling() {
         val repo = SecurityStateRepository(prefs)
-        repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         repo.saveConfig(AppConfig(isEnabled = true, safetyNetIntervalMinutes = 5))
 
         SafetyNetScheduler.isScheduled = { false }
@@ -255,7 +256,7 @@ class SafetyNetSchedulerTest {
     @Test
     fun schedule_afterReceiverFires_reArmsAlarm() {
         val repo = SecurityStateRepository(prefs)
-        repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+        repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         repo.saveConfig(AppConfig(isEnabled = true, safetyNetIntervalMinutes = 5))
 
         var scheduled = false
