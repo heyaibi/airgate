@@ -354,11 +354,13 @@ class GraceWipeSchedulerInstrumentedTest {
     fun latchedCountdown_stillFiresTheWipeOnItsDeadline() {
         // The latch only prevents re-arming an active countdown; it must never
         // stop the scheduled wipe from executing on the original deadline.
-        // AlarmManager may defer setAndAllowWhileIdle() for much longer than this
-        // test should wait, so deliver the same PendingIntent deterministically
-        // with the persisted deadline after the real scheduler has installed it.
-        val prefs = realPrefs()
-        val scheduler = GraceWipeScheduler(context)
+        // Use an isolated repository and the receiver's synchronous deadline seam
+        // so a watchdog or stale production alarm cannot alter this test's state.
+        val prefs = context.getSharedPreferences(
+            "grace_wipe_latch_${System.nanoTime()}",
+            Context.MODE_PRIVATE
+        )
+        val scheduler = RecordingGraceWipeScheduler()
         try {
             val repository = SecurityStateRepository(prefs, null, notificationsAllowedProvider = { true })
             repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
@@ -381,13 +383,17 @@ class GraceWipeSchedulerInstrumentedTest {
             engine.executeWipeState()
             assertEquals(firstDeadline, repository.getWipeDeadline())
 
-            while (SystemClock.elapsedRealtime() < firstDeadline) {
-                Thread.sleep(25)
-            }
-            fireScheduledWipe(firstDeadline)
+            assertEquals(1, scheduler.scheduleCalls)
+            assertEquals(SecurityState.COUNTDOWN_WIPE, repository.getSecurityState())
+
+            GraceWipeReceiver().executeIfDeadlineReached(
+                context = context,
+                repository = repository,
+                deadline = firstDeadline,
+                now = firstDeadline
+            )
             awaitWipeSettled(repository)
         } finally {
-            scheduler.cancel()
             prefs.edit().clear().commit()
         }
     }
