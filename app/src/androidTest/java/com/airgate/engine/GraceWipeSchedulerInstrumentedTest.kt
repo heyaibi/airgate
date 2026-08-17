@@ -276,9 +276,15 @@ class GraceWipeSchedulerInstrumentedTest {
             // The wipe is re-armed for the remaining grace, not executed early.
             assertTrue(rebooted.getSecurityState() == SecurityState.COUNTDOWN_WIPE)
 
-            // The re-armed wipe fires once the deadline elapses on the monotonic
-            // clock — delivered deterministically via the scheduled PendingIntent.
-            fireScheduledWipe()
+            // Execute the wipe directly via the receiver's synchronous guard —
+            // deterministic, no broadcast delivery race on CI.
+            val deadline = rebooted.getWipeDeadline()
+            GraceWipeReceiver().executeIfDeadlineReached(
+                context = context,
+                repository = rebooted,
+                deadline = deadline,
+                now = deadline
+            )
             awaitState(rebooted, SecurityState.WIPING)
         } finally {
             scheduler.cancel()

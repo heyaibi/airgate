@@ -80,6 +80,7 @@ open class GraceWipeScheduler(
     open fun cancel() {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
         alarmManager.cancel(graceWipePendingIntent(0L))
+        graceWipePendingIntent(0L).cancel()
     }
 
     private fun graceWipePendingIntent(triggerAtMillis: Long): PendingIntent {

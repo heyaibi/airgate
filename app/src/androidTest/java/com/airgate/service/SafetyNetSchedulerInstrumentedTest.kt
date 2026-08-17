@@ -54,13 +54,25 @@ class SafetyNetSchedulerInstrumentedTest {
     fun setUp() {
         prefs = context.getSharedPreferences("airgate_secure_prefs", Context.MODE_PRIVATE)
         prefs.edit().clear().commit()
-        SafetyNetScheduler.cancel(context)
+        fullyCancelAlarm()
     }
 
     @After
     fun tearDown() {
-        SafetyNetScheduler.cancel(context)
+        fullyCancelAlarm()
         prefs.edit().clear().commit()
+    }
+
+    /**
+     * Cancels both the AlarmManager alarm and the lingering PendingIntent.
+     * SafetyNetScheduler.cancel() only calls alarmManager.cancel() which removes
+     * the scheduled alarm but leaves the PendingIntent registered in the system —
+     * PendingIntent.getBroadcast with FLAG_NO_CREATE still finds it. This helper
+     * also calls PendingIntent.cancel() to fully clean up between tests.
+     */
+    private fun fullyCancelAlarm() {
+        SafetyNetScheduler.cancel(context)
+        pendingIntentSnapshot()?.cancel()
     }
 
     @Test
@@ -100,7 +112,7 @@ class SafetyNetSchedulerInstrumentedTest {
         SafetyNetScheduler.schedule(context)
         assertTrue(SafetyNetScheduler.checkIsScheduled(context))
 
-        SafetyNetScheduler.cancel(context)
+        fullyCancelAlarm()
 
         assertFalse("alarm must not be pending after cancel", SafetyNetScheduler.checkIsScheduled(context))
     }
@@ -139,7 +151,7 @@ class SafetyNetSchedulerInstrumentedTest {
         SafetyNetScheduler.schedule(context)
         assertTrue(SafetyNetScheduler.checkIsScheduled(context))
 
-        SafetyNetScheduler.cancel(context)
+        fullyCancelAlarm()
         assertFalse(SafetyNetScheduler.checkIsScheduled(context))
 
         SafetyNetScheduler.schedule(context)
@@ -169,7 +181,7 @@ class SafetyNetSchedulerInstrumentedTest {
         repeat(5) {
             SafetyNetScheduler.schedule(context)
             assertTrue("alarm must be pending after schedule cycle $it", SafetyNetScheduler.checkIsScheduled(context))
-            SafetyNetScheduler.cancel(context)
+            fullyCancelAlarm()
             assertFalse("alarm must not be pending after cancel cycle $it", SafetyNetScheduler.checkIsScheduled(context))
         }
 

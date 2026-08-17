@@ -94,7 +94,10 @@ class DhizukuAndPolicyTest {
         val results = policyEnforcer.enforceAllPolicies(liveConfig)
 
         assertTrue(results.values.all { it })
-        assertEquals("1", mockBinder.globalSettings["airplane_mode_on"])
+        // Airplane mode is NOT set by enforceAllPolicies — it is managed
+        // independently via enforceAirplaneMode() to avoid coupling it to
+        // the debugging toggle.
+        assertFalse(mockBinder.globalSettings.containsKey("airplane_mode_on"))
         assertEquals("0", mockBinder.globalSettings["adb_enabled"])
         assertEquals(DevicePolicyEnforcer.REQUIRED_USER_RESTRICTIONS.size, mockBinder.userRestrictions.size)
         assertTrue(mockBinder.userRestrictions.contains(android.os.UserManager.DISALLOW_DEBUGGING_FEATURES))
@@ -165,7 +168,9 @@ class DhizukuAndPolicyTest {
         val dryRunConfig = AppConfig(dryRunMode = true)
         policyEnforcer.enforceAllPolicies(dryRunConfig)
 
-        assertEquals("1", mockBinder.globalSettings["airplane_mode_on"])
+        // Airplane mode is NOT set by enforceAllPolicies — it is managed
+        // independently via enforceAirplaneMode().
+        assertFalse(mockBinder.globalSettings.containsKey("airplane_mode_on"))
         assertEquals("0", mockBinder.globalSettings["adb_enabled"])
         assertEquals(DevicePolicyEnforcer.REQUIRED_USER_RESTRICTIONS.size, mockBinder.userRestrictions.size)
         assertTrue(mockBinder.userRestrictions.contains(android.os.UserManager.DISALLOW_DEBUGGING_FEATURES))
@@ -218,5 +223,72 @@ class DhizukuAndPolicyTest {
 
         assertEquals(WipeResult.REJECTED, result)
         assertTrue(mockBinder.wipeCalled)
+    }
+
+    // --- enforceAirplaneMode tests ---
+
+    @Test
+    fun `enforceAirplaneMode sets airplane_mode_on to 1`() {
+        val config = AppConfig(isEnabled = true)
+        val result = policyEnforcer.enforceAirplaneMode(config)
+
+        assertTrue(result)
+        assertEquals("1", mockBinder.globalSettings["airplane_mode_on"])
+    }
+
+    @Test
+    fun `enforceAirplaneMode returns false and does not set when config is disabled`() {
+        val config = AppConfig(isEnabled = false)
+        val result = policyEnforcer.enforceAirplaneMode(config)
+
+        assertFalse(result)
+        assertFalse(mockBinder.globalSettings.containsKey("airplane_mode_on"))
+    }
+
+    @Test
+    fun `enforceAirplaneMode works in dry-run mode`() {
+        val config = AppConfig(isEnabled = true, dryRunMode = true)
+        val result = policyEnforcer.enforceAirplaneMode(config)
+
+        assertTrue(result)
+        assertEquals("1", mockBinder.globalSettings["airplane_mode_on"])
+    }
+
+    // --- Decoupling tests: debugging toggle must not affect airplane mode ---
+
+    @Test
+    fun `toggling blockDebuggingFeatures on does not set airplane_mode_on`() {
+        val configWithBlock = AppConfig(blockDebuggingFeatures = true)
+        policyEnforcer.enforceAllPolicies(configWithBlock)
+
+        assertFalse(mockBinder.globalSettings.containsKey("airplane_mode_on"))
+    }
+
+    @Test
+    fun `toggling blockDebuggingFeatures off does not set airplane_mode_on`() {
+        val configWithoutBlock = AppConfig(blockDebuggingFeatures = false)
+        policyEnforcer.enforceAllPolicies(configWithoutBlock)
+
+        assertFalse(mockBinder.globalSettings.containsKey("airplane_mode_on"))
+    }
+
+    @Test
+    fun `enforceAirplaneMode and enforceAllPolicies are independent`() {
+        // Simulate the scenario: user toggles debugging block, then separately
+        // airplane mode is enforced by the posture audit.
+        val config = AppConfig(isEnabled = true, blockDebuggingFeatures = true)
+
+        // Step 1: Debugging toggle calls enforceAllPolicies
+        policyEnforcer.enforceAllPolicies(config)
+        assertFalse(mockBinder.globalSettings.containsKey("airplane_mode_on"))
+
+        // Step 2: PostureAudit calls enforceAirplaneMode
+        val airplaneResult = policyEnforcer.enforceAirplaneMode(config)
+        assertTrue(airplaneResult)
+        assertEquals("1", mockBinder.globalSettings["airplane_mode_on"])
+
+        // Debugging restrictions are still enforced
+        assertTrue(mockBinder.userRestrictions.contains(android.os.UserManager.DISALLOW_DEBUGGING_FEATURES))
+        assertEquals("0", mockBinder.globalSettings["adb_enabled"])
     }
 }

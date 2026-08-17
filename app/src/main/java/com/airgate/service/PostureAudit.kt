@@ -81,6 +81,9 @@ class PostureAudit(
         //    flake at boot/wake) is repaired before anything is audited. Verifying
         //    before enforcing would raise a false "Device Protection Bypassed" on
         //    every such blip, which is the wake-up false alarm this ordering addresses.
+        //    Airplane mode is enforced separately to avoid coupling it to the
+        //    debugging toggle.
+        policyEnforcer.enforceAirplaneMode(config)
         policyEnforcer.enforceAllPolicies(config)
 
         // 2. Audit active user restrictions

@@ -66,6 +66,7 @@ object SafetyNetScheduler {
     fun cancel(context: Context) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
         alarmManager.cancel(pendingIntent(context))
+        pendingIntent(context).cancel()
     }
 
     /** Checks whether the safety-net alarm is already scheduled on the real framework. */

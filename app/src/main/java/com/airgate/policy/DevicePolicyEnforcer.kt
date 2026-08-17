@@ -56,12 +56,14 @@ class DevicePolicyEnforcer(
     fun enforceAllPolicies(config: AppConfig): Map<String, Boolean> {
         val results = mutableMapOf<String, Boolean>()
 
-        // Enforce global settings. Airplane mode is always forced on; ADB is only
-        // pinned to 0 while the owner wants the debugging block. When the owner
-        // turns the block OFF, actively restore adb_enabled + developer options so
-        // the device can be reached over `adb` for install/recovery instead of
-        // staying unreachable.
-        results["airplane_mode_on"] = dhizukuManager.setGlobalSetting("airplane_mode_on", "1", config)
+        // Enforce global settings. ADB is pinned to 0 while the owner wants the
+        // debugging block. When the owner turns the block OFF, actively restore
+        // adb_enabled + developer options so the device can be reached over `adb`
+        // for install/recovery instead of staying unreachable.
+        // NOTE: Airplane mode is intentionally NOT set here. It is managed
+        // independently via enforceAirplaneMode() to avoid coupling it to the
+        // debugging toggle — toggling debugging features should never force
+        // airplane mode as a side effect.
         results["adb_enabled"] = if (config.blockDebuggingFeatures) {
             dhizukuManager.setGlobalSetting("adb_enabled", "0", config)
         } else {
@@ -111,5 +113,15 @@ class DevicePolicyEnforcer(
         val userManager = context.getSystemService(Context.USER_SERVICE) as? UserManager ?: return false
         val actuallyBlocked = userManager.userRestrictions.getBoolean(UserManager.DISALLOW_DEBUGGING_FEATURES, false)
         return actuallyBlocked == config.blockDebuggingFeatures
+    }
+
+    /**
+     * Enforces airplane mode independently of other policies. Called by the posture
+     * audit when the watchdog is enabled, and by reactive hardening on breach.
+     * Returns true if the setting was applied, false if the watchdog is disabled.
+     */
+    fun enforceAirplaneMode(config: AppConfig): Boolean {
+        if (!config.isEnabled) return false
+        return dhizukuManager.setGlobalSetting("airplane_mode_on", "1", config)
     }
 }
