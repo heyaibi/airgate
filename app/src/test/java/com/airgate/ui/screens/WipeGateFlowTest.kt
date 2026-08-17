@@ -24,11 +24,13 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.airgate.WipeGate
 import com.airgate.data.repository.SecurityStateRepository
+import com.airgate.domain.model.AppConfig
 import com.airgate.domain.model.SecurityState
 import com.airgate.testutil.crypto.AndroidKeyStoreRule
 import org.junit.Rule
@@ -70,22 +72,22 @@ class WipeGateFlowTest {
         }
 
         composeRule.onNodeWithText("NORMAL CONTENT").assertIsDisplayed()
-        composeRule.onNodeWithText("DEVICE WIPE EXECUTED").assertDoesNotExist()
+        composeRule.onNodeWithText("FACTORY RESET PENDING").assertDoesNotExist()
 
-        // A background component (the watchdog) flips the state while the UI is
-        // already in the foreground — no lifecycle event fires.
+        repository.saveConfig(AppConfig(dryRunMode = false))
         repository.setSecurityState(SecurityState.WIPING)
 
         composeRule.waitUntil(timeoutMillis = 15_000) {
-            composeRule.onAllNodesWithText("DEVICE WIPE EXECUTED").fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithText("FACTORY RESET PENDING").fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.onNodeWithText("DEVICE WIPE EXECUTED").assertIsDisplayed()
+        composeRule.onNodeWithText("FACTORY RESET PENDING").assertIsDisplayed()
         composeRule.onNodeWithText("NORMAL CONTENT").assertDoesNotExist()
     }
 
     @Test
     fun normalContent_returnsWhenTheFlowLeavesWiping() {
         val repository = freshRepository()
+        repository.saveConfig(AppConfig(dryRunMode = false))
         repository.setSecurityState(SecurityState.WIPING)
 
         composeRule.setContent {
@@ -99,20 +101,40 @@ class WipeGateFlowTest {
             }
         }
 
-        composeRule.onNodeWithText("DEVICE WIPE EXECUTED").assertIsDisplayed()
+        composeRule.onNodeWithText("FACTORY RESET PENDING").assertIsDisplayed()
 
-        // The owner's PIN-gated reset returns the state to compliant.
         repository.setSecurityState(SecurityState.ARMED_COMPLIANT)
 
         composeRule.waitUntil(timeoutMillis = 15_000) {
             composeRule.onAllNodesWithText("NORMAL CONTENT").fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithText("NORMAL CONTENT").assertIsDisplayed()
-        composeRule.onNodeWithText("DEVICE WIPE EXECUTED").assertDoesNotExist()
+        composeRule.onNodeWithText("FACTORY RESET PENDING").assertDoesNotExist()
     }
 
     @Test
     fun wipeScreen_isShownImmediatelyWhenTheFlowStartsInWiping() {
+        val repository = freshRepository()
+        repository.saveConfig(AppConfig(dryRunMode = false))
+        repository.setSecurityState(SecurityState.WIPING)
+
+        composeRule.setContent {
+            val securityState by repository.securityStateFlow.collectAsStateWithLifecycle()
+            WipeGate(
+                securityState = securityState,
+                repository = repository,
+                onResetStreakRequested = {}
+            ) {
+                Text("NORMAL CONTENT")
+            }
+        }
+
+        composeRule.onNodeWithText("FACTORY RESET PENDING").assertIsDisplayed()
+        composeRule.onNodeWithText("NORMAL CONTENT").assertDoesNotExist()
+    }
+
+    @Test
+    fun wipeScreen_showsDryRunTextInDryRunMode() {
         val repository = freshRepository()
         repository.setSecurityState(SecurityState.WIPING)
 
@@ -127,10 +149,33 @@ class WipeGateFlowTest {
             }
         }
 
-        // A fresh collector replays the current state, so an app that restarts
-        // mid-wipe lands directly on the emergency screen.
-        composeRule.onNodeWithText("DEVICE WIPE EXECUTED").assertIsDisplayed()
-        composeRule.onNodeWithText("NORMAL CONTENT").assertDoesNotExist()
+        composeRule.onNodeWithText("SIMULATED WIPE").assertIsDisplayed()
+        composeRule.onNodeWithText("SIMULATION — NO DATA WILL BE DESTROYED").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("FACTORY RESET PENDING").assertDoesNotExist()
+        composeRule.onNodeWithText("LIVE WIPE — THIS DEVICE WILL BE FACTORY-RESET").assertDoesNotExist()
+    }
+
+    @Test
+    fun wipeScreen_showsLiveTextInLiveMode() {
+        val repository = freshRepository()
+        repository.saveConfig(AppConfig(dryRunMode = false))
+        repository.setSecurityState(SecurityState.WIPING)
+
+        composeRule.setContent {
+            val securityState by repository.securityStateFlow.collectAsStateWithLifecycle()
+            WipeGate(
+                securityState = securityState,
+                repository = repository,
+                onResetStreakRequested = {}
+            ) {
+                Text("NORMAL CONTENT")
+            }
+        }
+
+        composeRule.onNodeWithText("FACTORY RESET PENDING").assertIsDisplayed()
+        composeRule.onNodeWithText("LIVE WIPE — THIS DEVICE WILL BE FACTORY-RESET").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("SIMULATED WIPE").assertDoesNotExist()
+        composeRule.onNodeWithText("SIMULATION — NO DATA WILL BE DESTROYED").assertDoesNotExist()
     }
 
     private fun freshRepository(): SecurityStateRepository {

@@ -80,7 +80,7 @@ fun SimulatedWipeScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = "DEVICE WIPE EXECUTED",
+                text = if (config.dryRunMode) "SIMULATED WIPE" else "FACTORY RESET PENDING",
                 color = WipePalette.headline,
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
@@ -90,7 +90,11 @@ fun SimulatedWipeScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = "Breach threat threshold reached. Production airgap protocol would now trigger an immediate, non-recoverable zero-fill factory reset.",
+                text = if (config.dryRunMode) {
+                    "Breach threat threshold reached. This simulation demonstrates the airgap wipe without destroying any data."
+                } else {
+                    "Breach threat threshold reached. A non-recoverable zero-fill factory reset will begin immediately."
+                },
                 color = WipePalette.bodyText,
                 fontSize = 14.sp,
                 lineHeight = 21.sp,
@@ -109,8 +113,19 @@ fun SimulatedWipeScreen(
 
             Surface(
                 shape = RoundedCornerShape(50),
-                color = WipePalette.beacon.copy(alpha = 0.14f),
-                border = BorderStroke(1.dp, WipePalette.beacon.copy(alpha = 0.45f))
+                color = if (config.dryRunMode) {
+                    WipePalette.beacon.copy(alpha = 0.14f)
+                } else {
+                    MaterialTheme.colorScheme.error.copy(alpha = 0.14f)
+                },
+                border = BorderStroke(
+                    1.dp,
+                    if (config.dryRunMode) {
+                        WipePalette.beacon.copy(alpha = 0.45f)
+                    } else {
+                        MaterialTheme.colorScheme.error.copy(alpha = 0.45f)
+                    }
+                )
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -120,15 +135,20 @@ fun SimulatedWipeScreen(
                         modifier = Modifier
                             .size(8.dp)
                             .clip(CircleShape)
-                            .background(WipePalette.beacon)
+                            .background(
+                                if (config.dryRunMode) WipePalette.beacon
+                                else MaterialTheme.colorScheme.error
+                            )
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "SIMULATED — NO REAL DATA DESTROYED",
+                        text = if (config.dryRunMode) "SIMULATION — NO DATA WILL BE DESTROYED"
+                        else "LIVE WIPE — THIS DEVICE WILL BE FACTORY-RESET",
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
                         letterSpacing = 0.4.sp,
-                        color = WipePalette.beacon
+                        color = if (config.dryRunMode) WipePalette.beacon
+                        else MaterialTheme.colorScheme.error
                     )
                 }
             }
@@ -162,7 +182,11 @@ fun SimulatedWipeScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = "Recovering from a simulated wipe requires your Armed PIN",
+                text = if (config.dryRunMode) {
+                    "Recovering from a simulated wipe requires your Armed PIN"
+                } else {
+                    "This device will be wiped. Recovery is not possible in live mode."
+                },
                 color = WipePalette.detailText.copy(alpha = 0.75f),
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium
@@ -172,7 +196,11 @@ fun SimulatedWipeScreen(
                 PinVerifyDialog(
                     repository = repository,
                     title = "Reset Threat Score",
-                    description = "Recovering from a simulated wipe requires your Armed PIN.",
+                    description = if (config.dryRunMode) {
+                        "Recovering from a simulated wipe requires your Armed PIN."
+                    } else {
+                        "This device will be wiped. Recovery is not possible in live mode."
+                    },
                     confirmLabel = "Reset",
                     onDismiss = { showPinDialog = false },
                     onVerified = {

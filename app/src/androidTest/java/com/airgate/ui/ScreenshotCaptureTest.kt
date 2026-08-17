@@ -155,8 +155,9 @@ class ScreenshotCaptureTest {
         waitForText("Security Settings")
         composeRule.onNodeWithContentDescription("Back").performClick()
         waitForText("THREAT SCORE")
+        repository.saveConfig(com.airgate.domain.model.AppConfig(dryRunMode = false))
         repository.setSecurityState(SecurityState.WIPING)
-        waitForText("DEVICE WIPE EXECUTED")
+        waitForText("FACTORY RESET PENDING")
         composeRule.waitForIdle()
         park("wipe")
 

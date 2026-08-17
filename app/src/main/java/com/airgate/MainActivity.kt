@@ -125,15 +125,16 @@ class MainActivity : ComponentActivity() {
                         containerColor = MaterialTheme.colorScheme.background,
                         contentWindowInsets = WindowInsets(0, 0, 0, 0),
                         bottomBar = {
-                            QuickActionsBottomBar(
-                                currentScreen = currentScreen.value,
-                                enabled = currentScreen.value != Screen.AUTH_PIN &&
-                                    securityState != SecurityState.WIPING,
-                                onSelect = { screen ->
-                                    if (screen == Screen.VIOLATION_GUIDE) guideInitialTab = 0
-                                    currentScreen.value = screen
-                                }
-                            )
+                            if (securityState != SecurityState.WIPING) {
+                                QuickActionsBottomBar(
+                                    currentScreen = currentScreen.value,
+                                    enabled = currentScreen.value != Screen.AUTH_PIN,
+                                    onSelect = { screen ->
+                                        if (screen == Screen.VIOLATION_GUIDE) guideInitialTab = 0
+                                        currentScreen.value = screen
+                                    }
+                                )
+                            }
                         }
                     ) { innerPadding ->
                         Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
