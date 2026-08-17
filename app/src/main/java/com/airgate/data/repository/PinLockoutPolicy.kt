@@ -31,12 +31,23 @@ object PinLockoutPolicy {
     const val BASE_LOCKOUT_MS = 30_000L
 
     /**
+     * Upper bound on the lockout duration. Matches the Android CDD §9.11
+     * requirement that exponential backoff on lock-screen authentication must
+     * reach at least 24 hours per attempt beyond 150 failures. Capping here
+     * also prevents a Long overflow: without a cap, the unchecked double
+     * multiplication produces `Long.MAX_VALUE` which, when added to a
+     * positive monotonic timestamp, wraps negative and silently disables
+     * the lockout.
+     */
+    const val MAX_LOCKOUT_MS = 24 * 60 * 60 * 1000L
+
+    /**
      * The lockout duration for a given total number of consecutive failed
      * attempts, or 0 when the threshold has not been reached yet.
      */
     fun lockoutMs(attempts: Int): Long {
         if (attempts < MAX_ATTEMPTS) return 0L
         val exponent = (attempts - MAX_ATTEMPTS).coerceAtLeast(0)
-        return (BASE_LOCKOUT_MS * 2.0.pow(exponent)).toLong()
+        return (BASE_LOCKOUT_MS * 2.0.pow(exponent)).toLong().coerceAtMost(MAX_LOCKOUT_MS)
     }
 }

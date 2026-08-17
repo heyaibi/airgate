@@ -28,7 +28,7 @@ Why you'd want this: the Armed PIN is the single key to the app. It guards:
 
 How it is stored: the PIN is never kept in plaintext. It is run through PBKDF2-HMAC-SHA256 (120,000 rounds) with a random per-install salt, and only that scrambled value is stored. If the phone ever falls into someone else's hands, they cannot read the PIN back out of the stored data.
 
-After 5 wrong attempts the PIN locks out with an **exponential backoff** — 30 s, then 60 s, then 120 s, and so on. Think of a door that freezes shut a little longer after every failed guess: slow enough that an attacker cannot hammer through it, but harmless if you simply mistyped.
+After 5 wrong attempts the PIN locks out with an **exponential backoff** — 30 s, then 60 s, then 120 s, and so on, up to a maximum of 24 hours. Think of a door that freezes shut a little longer after every failed guess: slow enough that an attacker cannot hammer through it, but harmless if you simply mistyped.
 
 <img src="art/screens/mockups/pin-lock-light.png" alt="Armed PIN lock screen" width="340" style="border: 1px solid #aaaaaa; border-radius: 8px;" />
 
