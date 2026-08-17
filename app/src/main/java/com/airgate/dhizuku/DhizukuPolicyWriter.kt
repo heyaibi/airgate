@@ -31,12 +31,13 @@ internal class DhizukuPolicyWriter(
     private val bridge: DhizukuDpmBridge
 ) {
     fun setGlobalSetting(key: String, value: String, config: AppConfig): Boolean {
+        val admin = bridge.getAdminComponent() ?: return false
         if (bridge.wrapper != null) {
-            return bridge.wrapper.setGlobalSetting(bridge.getAdminComponent(), key, value)
+            return bridge.wrapper.setGlobalSetting(admin, key, value)
         }
         val dpm = bridge.wrappedDpm() ?: return false
         return try {
-            dpm.setGlobalSetting(bridge.getAdminComponent(), key, value)
+            dpm.setGlobalSetting(admin, key, value)
             true
         } catch (e: Exception) {
             false
@@ -44,12 +45,13 @@ internal class DhizukuPolicyWriter(
     }
 
     fun addUserRestriction(restrictionKey: String, config: AppConfig): Boolean {
+        val admin = bridge.getAdminComponent() ?: return false
         if (bridge.wrapper != null) {
-            return bridge.wrapper.addUserRestriction(bridge.getAdminComponent(), restrictionKey)
+            return bridge.wrapper.addUserRestriction(admin, restrictionKey)
         }
         val dpm = bridge.wrappedDpm() ?: return false
         return try {
-            dpm.addUserRestriction(bridge.getAdminComponent(), restrictionKey)
+            dpm.addUserRestriction(admin, restrictionKey)
             true
         } catch (e: Exception) {
             false
@@ -57,12 +59,13 @@ internal class DhizukuPolicyWriter(
     }
 
     fun clearUserRestriction(restrictionKey: String, config: AppConfig): Boolean {
+        val admin = bridge.getAdminComponent() ?: return false
         if (bridge.wrapper != null) {
-            return bridge.wrapper.clearUserRestriction(bridge.getAdminComponent(), restrictionKey)
+            return bridge.wrapper.clearUserRestriction(admin, restrictionKey)
         }
         val dpm = bridge.wrappedDpm() ?: return false
         return try {
-            dpm.clearUserRestriction(bridge.getAdminComponent(), restrictionKey)
+            dpm.clearUserRestriction(admin, restrictionKey)
             true
         } catch (e: Exception) {
             false

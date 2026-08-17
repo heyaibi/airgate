@@ -62,7 +62,14 @@ class DhizukuManager(
     private val transactionTimeoutMs: Long = DEFAULT_TRANSACTION_TIMEOUT_MS
 ) : AutoCloseable {
     private val connection = DhizukuConnection(context, binderWrapper)
-    private val bridge = DhizukuDpmBridge(context, connection, binderWrapper)
+    private val bridge = DhizukuDpmBridge(
+        context = context,
+        connection = connection,
+        wrapper = binderWrapper,
+        injectedAdminComponent = binderWrapper?.let {
+            ComponentName(context.packageName, "${context.packageName}.DeviceAdminReceiver")
+        }
+    )
     private val policyWriter = DhizukuPolicyWriter(bridge)
     private val destructiveOps = DhizukuDestructiveOps(bridge)
 
@@ -72,7 +79,10 @@ class DhizukuManager(
      */
     fun init(): Boolean = runTransaction(defaultOnFailure = false) { connection.init() }
 
-    fun isDhizukuAvailable(): Boolean = runTransaction(defaultOnFailure = false) { connection.isDhizukuAvailable() }
+    fun getDhizukuAvailability(): DhizukuAvailability =
+        runTransaction(defaultOnFailure = DhizukuAvailability.UNAVAILABLE) { bridge.availability() }
+
+    fun isDhizukuAvailable(): Boolean = getDhizukuAvailability() == DhizukuAvailability.AUTHORIZED
 
     /**
      * Requests Dhizuku permission. When Dhizuku is active and running this opens
@@ -96,8 +106,8 @@ class DhizukuManager(
     fun wipeDevice(flags: Int, config: AppConfig): WipeResult =
         runTransaction(defaultOnFailure = WipeResult.REJECTED) { destructiveOps.wipeDevice(flags, config) }
 
-    fun getAdminComponent(): ComponentName =
-        runTransaction(defaultOnFailure = fallbackAdminComponent()) { bridge.getAdminComponent() }
+    fun getAdminComponent(): ComponentName? =
+        runTransaction(defaultOnFailure = null) { bridge.getAdminComponent() }
 
     fun setGlobalSetting(key: String, value: String, config: AppConfig): Boolean =
         runTransaction(defaultOnFailure = false) { policyWriter.setGlobalSetting(key, value, config) }
@@ -130,9 +140,6 @@ class DhizukuManager(
             defaultOnFailure
         }
     }
-
-    private fun fallbackAdminComponent(): ComponentName =
-        ComponentName(context.packageName, "${context.packageName}.DeviceAdminReceiver")
 
     override fun close() {
         transactionExecutor.shutdown()

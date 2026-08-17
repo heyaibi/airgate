@@ -42,17 +42,31 @@ internal class DhizukuDpmBridge(
      * platform wipe path can be exercised against a Robolectric-shadowed
      * [DevicePolicyManager] on the JVM without the Dhizuku binder plumbing.
      */
-    private val injectedDpm: DevicePolicyManager? = null
+    private val injectedDpm: DevicePolicyManager? = null,
+    private val identityChecker: DhizukuServerIdentityChecker =
+        PackageManagerDhizukuServerIdentityChecker(context),
+    private val injectedAdminComponent: ComponentName? = null,
+    private val ownerResolver: DhizukuOwnerResolver = RealDhizukuOwnerResolver
 ) {
-    fun getAdminComponent(): ComponentName {
+    fun availability(): DhizukuAvailability {
         if (wrapper != null) {
-            return ComponentName(context.packageName, "${context.packageName}.DeviceAdminReceiver")
+            val testWrapper = wrapper
+            return runCatching {
+                if (injectedAdminComponent != null && testWrapper.isPermissionGranted()) {
+                    DhizukuAvailability.AUTHORIZED
+                } else {
+                    DhizukuAvailability.UNAVAILABLE
+                }
+            }.getOrDefault(DhizukuAvailability.UNAVAILABLE)
         }
-        return try {
-            Dhizuku.getOwnerComponent()
-        } catch (e: Exception) {
-            ComponentName(context.packageName, "${context.packageName}.DeviceAdminReceiver")
-        }
+        if (!connection.init()) return DhizukuAvailability.UNAVAILABLE
+        val permissionGranted = runCatching { Dhizuku.isPermissionGranted() }.getOrDefault(false)
+        return DhizukuServerIdentity.resolveAvailability(permissionGranted, permissionGranted && trustedOwner() != null)
+    }
+
+    fun getAdminComponent(): ComponentName? {
+        if (wrapper != null) return injectedAdminComponent
+        return trustedOwner()
     }
 
     /**
@@ -76,7 +90,8 @@ internal class DhizukuDpmBridge(
                 HiddenApiBypass.setHiddenApiExemptions("")
             }
 
-            val ownerPackage = Dhizuku.getOwnerPackageName()
+            val ownerComponent = trustedOwner() ?: return null
+            val ownerPackage = ownerComponent.packageName
             val ownerContext = context.createPackageContext(ownerPackage, Context.CONTEXT_IGNORE_SECURITY)
             val manager = ownerContext.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
 
@@ -92,5 +107,11 @@ internal class DhizukuDpmBridge(
         } catch (e: Exception) {
             null
         }
+    }
+
+    private fun trustedOwner(): ComponentName? {
+        val ownerPackage = runCatching { ownerResolver.ownerPackageName() }.getOrNull()
+        val ownerComponent = runCatching { ownerResolver.ownerComponent() }.getOrNull()
+        return ownerComponent.takeIf { identityChecker.isTrusted(ownerPackage, it) }
     }
 }

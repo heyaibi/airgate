@@ -23,6 +23,7 @@ import android.os.Build
 import android.os.UserManager
 import android.provider.Settings
 import com.airgate.dhizuku.DhizukuManager
+import com.airgate.dhizuku.DhizukuAvailability
 
 data class ShieldLayerStatus(
     val title: String,
@@ -52,9 +53,8 @@ internal data class ShieldUsbRestrictions(
 @SuppressLint("InlinedApi")
 class ShieldStatusChecker(
     private val context: Context,
-    private val dhizukuAvailableReader: () -> Boolean = {
-        runCatching { DhizukuManager(context).isDhizukuAvailable() }.getOrDefault(false)
-    },
+    private val dhizukuAvailableReader: (() -> Boolean)? = null,
+    private val dhizukuAvailabilityReader: (() -> DhizukuAvailability)? = null,
     private val restrictionsReader: () -> android.os.Bundle? = {
         val userManager = context.getSystemService(Context.USER_SERVICE) as? UserManager
         runCatching { userManager?.userRestrictions }.getOrNull()
@@ -83,15 +83,27 @@ class ShieldStatusChecker(
     }
 
     private fun checkDhizuku(): ShieldLayerStatus {
-        val granted = runCatching { dhizukuAvailableReader() }.getOrDefault(false)
+        val availability = runCatching {
+            dhizukuAvailabilityReader?.invoke() ?: dhizukuAvailableReader?.let {
+                if (it()) DhizukuAvailability.AUTHORIZED
+                else DhizukuAvailability.UNAVAILABLE
+            } ?: DhizukuManager(context).use { it.getDhizukuAvailability() }
+        }.getOrDefault(DhizukuAvailability.UNAVAILABLE)
+        val granted = availability == DhizukuAvailability.AUTHORIZED
+        val subtitle = when (availability) {
+            DhizukuAvailability.AUTHORIZED -> "Policy enforcement & safe wipe authority"
+            DhizukuAvailability.UNAVAILABLE -> "Device owner authority unavailable"
+            DhizukuAvailability.UNTRUSTED_SERVER -> "Dhizuku server identity is not trusted"
+        }
+        val status = when (availability) {
+            DhizukuAvailability.AUTHORIZED -> "Enforced"
+            DhizukuAvailability.UNAVAILABLE -> "Unavailable"
+            DhizukuAvailability.UNTRUSTED_SERVER -> "Untrusted"
+        }
         return ShieldLayerStatus(
             title = "Dhizuku Device Owner",
-            subtitle = if (granted) {
-                "Policy enforcement & safe wipe authority"
-            } else {
-                "Device owner authority not granted"
-            },
-            status = if (granted) "Enforced" else "Not Granted",
+            subtitle = subtitle,
+            status = status,
             isOk = granted
         )
     }

@@ -45,6 +45,46 @@ class DhizukuExecutorInstrumentedTest {
     private val context: Context
         get() = InstrumentationRegistry.getInstrumentation().targetContext
 
+    @Test
+    fun identityValidation_rejectsThisAppAndMissingServer_onDevice() {
+        val ownPackage = context.packageName
+        val ownComponent = ComponentName(ownPackage, "$ownPackage.DeviceAdminReceiver")
+        val validDhizukuComponent = ComponentName(
+            DhizukuServerIdentity.PACKAGE_NAME,
+            DhizukuServerIdentity.ADMIN_CLASS_NAME
+        )
+
+        assertFalse(
+            PackageManagerDhizukuServerIdentityChecker(context)
+                .isTrusted(ownPackage, ownComponent)
+        )
+        assertFalse(
+            PackageManagerDhizukuServerIdentityChecker(context)
+                .isTrusted(DhizukuServerIdentity.PACKAGE_NAME, validDhizukuComponent)
+        )
+    }
+
+    @Test
+    fun identityValidation_requiresExactOwnerComponent_onDevice() {
+        assertFalse(
+            DhizukuServerIdentity.isExpectedOwner(
+                DhizukuServerIdentity.PACKAGE_NAME,
+                ComponentName(DhizukuServerIdentity.PACKAGE_NAME, "com.rosan.dhizuku.server.OtherReceiver")
+            )
+        )
+    }
+
+    @Test
+    fun manager_doesNotReturnAirgateAdminWhenDhizukuIsUnavailable_onDevice() {
+        val manager = DhizukuManager(context)
+        try {
+            assertEquals(null, manager.getAdminComponent())
+            assertEquals(DhizukuAvailability.UNAVAILABLE, manager.getDhizukuAvailability())
+        } finally {
+            manager.close()
+        }
+    }
+
     private class RecordingWrapper : DhizukuBinderWrapper {
         val executedOnMainThread = mutableListOf<Boolean>()
         val executingThreads = mutableListOf<String>()

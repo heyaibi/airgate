@@ -9,6 +9,7 @@
 package com.airgate.policy
 
 import android.content.ContextWrapper
+import com.airgate.dhizuku.DhizukuAvailability
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -128,8 +129,33 @@ class ShieldStatusCheckerTest {
 
         val result = checker.check().first()
 
-        assertEquals("Not Granted", result.status)
+        assertEquals("Unavailable", result.status)
         assertFalse(result.isOk)
+    }
+
+    @Test
+    fun `production check distinguishes an untrusted server from unavailable authority`() {
+        val untrusted = ShieldStatusChecker(
+            context = ContextWrapper(null),
+            dhizukuAvailabilityReader = { DhizukuAvailability.UNTRUSTED_SERVER },
+            restrictionsReader = { null },
+            airplaneModeReader = { null },
+            bluetoothOnReader = { null }
+        ).check().first()
+        val unavailable = ShieldStatusChecker(
+            context = ContextWrapper(null),
+            dhizukuAvailabilityReader = { DhizukuAvailability.UNAVAILABLE },
+            restrictionsReader = { null },
+            airplaneModeReader = { null },
+            bluetoothOnReader = { null }
+        ).check().first()
+
+        assertEquals("Untrusted", untrusted.status)
+        assertTrue(untrusted.subtitle.contains("not trusted"))
+        assertFalse(untrusted.isOk)
+        assertEquals("Unavailable", unavailable.status)
+        assertTrue(unavailable.subtitle.contains("unavailable"))
+        assertFalse(unavailable.isOk)
     }
 
     @Test

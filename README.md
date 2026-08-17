@@ -21,7 +21,7 @@
 ### Reactive & self-defense
 
 - **Reactive hardening** — on breach, the engine re-asserts airplane mode and re-locks the Device Owner restrictions.
-- **Self-defense audit** — periodically verifies Dhizuku Device Owner authority and pins the app's own signature (hash baked into the build from the signing certificate), detecting compromise.
+- **Self-defense audit** — periodically verifies the expected Dhizuku Device Owner package, admin component, and signing certificate before using or reporting the delegated authority, while pinning the app's own signature (hash baked into the build from the signing certificate) to detect compromise.
 - **Block Debugging Features** — a single toggle governs ADB / developer-options enforcement; **USB data transfer** (MTP/PTP/ADB/accessory/MIDI/tethering/ethernet) is *always* enforced regardless of that toggle.
 
 ### App experience
