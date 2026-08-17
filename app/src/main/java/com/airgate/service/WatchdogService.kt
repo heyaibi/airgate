@@ -166,7 +166,9 @@ class WatchdogService : Service(), SignalListener {
 
     override fun onDestroy() {
         super.onDestroy()
-        SafetyNetScheduler.cancel(applicationContext)
+        // Safety-net alarm is intentionally NOT cancelled here: it must
+        // survive service lifecycle events so the periodic posture audit
+        // continues firing even if the service is destroyed and restarted.
         auditHandler?.removeCallbacks(auditRunnable)
         auditHandler = null
         auditThread?.quitSafely()

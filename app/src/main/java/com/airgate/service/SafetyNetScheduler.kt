@@ -26,24 +26,29 @@ import kotlin.math.max
 
 /**
  * Schedules the periodic SafetyNet / posture audit via AlarmManager.
- * A one-shot exact alarm is re-armed on every fire so config changes
- * (interval, enabled state) take effect on the next cycle without
- * touching the scheduled alarm from a service restart.
+ * A one-shot exact alarm is re-armed after each fire so config changes
+ * (interval, enabled state) take effect on the next cycle. The scheduler
+ * does not re-arm on a service restart — the existing alarm persists
+ * across service lifecycle events.
  */
 object SafetyNetScheduler {
 
     private const val REQUEST_CODE = 4001
     private const val MIN_INTERVAL_MS = 30_000L
 
+    /** Injectable seam for testing — returns whether the alarm is already pending. */
+    internal var isScheduled: (Context) -> Boolean = { ctx -> checkIsScheduled(ctx) }
+
     fun schedule(context: Context) {
         val repository = SecurityStateRepository(context.applicationContext)
         val config = repository.getConfig()
         if (!config.isEnabled) return
 
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        if (isScheduled(context)) return
+
         val intervalMs = max(config.safetyNetIntervalMinutes * 60_000L, MIN_INTERVAL_MS)
         val triggerAt = System.currentTimeMillis() + intervalMs
-
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
         val pendingIntent = pendingIntent(context)
         try {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S &&
@@ -61,6 +66,17 @@ object SafetyNetScheduler {
     fun cancel(context: Context) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
         alarmManager.cancel(pendingIntent(context))
+    }
+
+    /** Checks whether the safety-net alarm is already scheduled on the real framework. */
+    internal fun checkIsScheduled(context: Context): Boolean {
+        val intent = Intent(context, SafetyNetReceiver::class.java).apply {
+            action = SafetyNetReceiver.ACTION
+        }
+        return PendingIntent.getBroadcast(
+            context, REQUEST_CODE, intent,
+            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+        ) != null
     }
 
     private fun pendingIntent(context: Context): PendingIntent {
