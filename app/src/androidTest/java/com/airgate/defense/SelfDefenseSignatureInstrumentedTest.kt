@@ -105,10 +105,10 @@ class SelfDefenseSignatureInstrumentedTest {
             it.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
             it.saveConfig(
                 AppConfig(
-                    isEnabled = true,
+                    isEnabled = false,
                     dryRunMode = true,
                     graceWindowSeconds = 0,
-                    deviceProtectionAlarmEnabled = true
+                    deviceProtectionAlarmEnabled = false
                 )
             )
         }
@@ -121,7 +121,7 @@ class SelfDefenseSignatureInstrumentedTest {
 
         assertFalse("a wrong pinned hash must fail verification", manager.verifyAppSignature())
         assertEquals(
-            "the tamper breach must route through the self-tamper tier in dry-run",
+            "the tamper breach must route through the self-tamper tier even with posture alarms disabled",
             SecurityState.WIPING,
             repository.getSecurityState()
         )

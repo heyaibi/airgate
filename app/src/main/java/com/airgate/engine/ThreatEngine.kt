@@ -44,12 +44,25 @@ class ThreatEngine(
     private val alarmNotifier: AlarmNotifier = AlarmNotifier(context),
     internal val graceWipeScheduler: GraceWipeScheduler = GraceWipeScheduler(context)
 ) {
+    private enum class BreachOrigin(
+        val bypassEnabledGate: Boolean,
+        val bypassDeviceProtectionAlarm: Boolean
+    ) {
+        ORDINARY(false, false),
+        SELF_DEFENSE(true, true),
+        STATE_TAMPER(true, true)
+    }
+
     private val wipeController = WipeController(context, dhizukuManager)
     private val reactiveHardener = ReactiveHardener(context, repository, dhizukuManager)
 
-    fun processBreach(event: BreachEvent, bypassEnabledGate: Boolean = false) {
+    fun processBreach(event: BreachEvent) {
+        processBreach(event, BreachOrigin.ORDINARY)
+    }
+
+    private fun processBreach(event: BreachEvent, origin: BreachOrigin) {
         val config = repository.getConfig()
-        if (!config.isEnabled && !bypassEnabledGate) {
+        if (!config.isEnabled && !origin.bypassEnabledGate) {
             // App monitoring is disabled by the user
             return
         }
@@ -67,9 +80,12 @@ class ThreatEngine(
         // Suppression gate: the device-protection posture alarm is OFF by default.
         // When disabled, the condition is still detected and its reason recorded, but
         // no alarm, hardening, streak, or wipe path runs — enforcement/self-healing
-        // is handled independently by the posture audit.
+        // is handled independently by the posture audit. Self-defense routes pass
+        // an explicit bypass because this setting controls ordinary posture alarms,
+        // not the emergency response to losing the protection layer itself.
         val suppressed = when (event.violationType) {
-            ViolationType.DO_RESTRICTION_MISSING -> !config.deviceProtectionAlarmEnabled
+            ViolationType.DO_RESTRICTION_MISSING ->
+                !config.deviceProtectionAlarmEnabled && !origin.bypassDeviceProtectionAlarm
             // Debugging-domain events stay authorized while the owner deliberately
             // turns OFF "Block Debugging Features" for recovery/install. Firing on
             // them would re-run reactive hardening and accumulate points, so they
@@ -161,7 +177,8 @@ class ThreatEngine(
                 tier = config.selfTamperTier,
                 weight = violationType.defaultWeight,
                 rawMetadata = rawMetadata + mapOf("reason" to reason)
-            )
+            ),
+            BreachOrigin.SELF_DEFENSE
         )
     }
 
@@ -172,9 +189,9 @@ class ThreatEngine(
      * even when the watchdog is disabled: a tampered protected value can itself
      * flip `config.isEnabled` to its decrypt default (false), and gating the
      * tamper response behind the enabled flag would let the tamper silence
-     * itself. Escalation still respects the device-protection alarm toggle, and
-     * all enforcement side effects (hardening, wipe) remain the same as any
-     * self-tamper at the configured tier.
+     * itself. The emergency response bypasses the ordinary device-protection alarm
+     * toggle, and all enforcement side effects (hardening, wipe) remain the same as
+     * any self-tamper at the configured tier.
      */
     fun processStateTamperBreach(reason: String) {
         val config = repository.getConfig()
@@ -188,7 +205,7 @@ class ThreatEngine(
                 weight = violationType.defaultWeight,
                 rawMetadata = mapOf("reason" to reason)
             ),
-            bypassEnabledGate = true
+            BreachOrigin.STATE_TAMPER
         )
     }
 

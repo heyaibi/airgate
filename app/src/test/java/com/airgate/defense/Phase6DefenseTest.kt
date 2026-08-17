@@ -111,6 +111,14 @@ class Phase6DefenseTest {
 
     @Test
     fun testSelfDefense_DOStatusLost_TriggersBreachAndWipe() {
+        repository.saveConfig(
+            AppConfig(
+                isEnabled = false,
+                dryRunMode = true,
+                graceWindowSeconds = 0,
+                deviceProtectionAlarmEnabled = false
+            )
+        )
         val revokedBinder = MockDhizukuBinder(isGranted = false)
         val revokedDhizuku = DhizukuManager(dummyContext, revokedBinder)
         val testDefenseManager = SelfDefenseManager(dummyContext, revokedDhizuku, threatEngine, repository = repository)

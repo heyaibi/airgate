@@ -84,7 +84,7 @@ Every monitored condition, its trigger, response tier, whether it shows the full
 | Developer options on | Developer options are switched on | ALARM_STREAK | ✓ | ✓ | Ignored while Block Debugging Features is off |
 | System clock changed | The system clock moves beyond the clock-skew tolerance (default 5 minutes) | ALARM_STREAK | ✓ | ✓ | |
 | SIM state changed | A SIM card is present on a slot | ALARM_STREAK | ✓ | ✓ | |
-| Device protection bypassed | A device-protection restriction is missing or self-defense fails | ALARM_STREAK | ✓ | ✓ | Off by default — enable "Device Protection Bypassed" alarms; self-defense failures route straight to the wipe path |
+| Device protection bypassed | A device-protection restriction is missing or self-defense fails | ALARM_STREAK | ✓ | ✓ | Ordinary posture findings are off by default; self-defense failures always follow the configured self-tamper response |
 | Monitor registration failed | The network monitor's connectivity listener cannot be registered for a full minute — the fast detection path is down | ALARM_STREAK | ✓ | ✓ | Self-heals — retried with backoff every audit tick; the radio polls remain as a backstop |
 
 ### How scoring works
@@ -94,7 +94,7 @@ Every monitored condition, its trigger, response tier, whether it shows the full
 - **Response tiers** — `LOG_ONLY` records the event with no alarm or point; `ALARM` runs reactive hardening plus a full-screen alarm without scoring; `ALARM_STREAK` adds hardening + alarm + point; `INSTANT_WIPE` bypasses the streak entirely.
 - **Streak reset** — the threat streak is reset only by deliberate owner or developer actions: the PIN-gated Clear Threat Streak button on the dashboard, the reset after a simulated wipe, or the dry-run simulation harness. There is no automatic reset.
 - **Self-defense** — device-protection and signature-tamper failures default to `INSTANT_WIPE` through `selfTamperTier`, independent of the streak.
-- **Suppression** — the posture/tamper alarm (Device Protection Bypassed) is **off by default**: still detected and logged, but suppressed from alarm/point/wipe handling until enabled. ADB and developer-options violations are likewise silent while "Block Debugging Features" is off. USB data-transfer violations are never suppressed.
+- **Suppression** — ordinary posture findings (Device Protection Bypassed) are **off by default**: still detected and logged, but suppressed from alarm/point/wipe handling until enabled. Self-defense failures are separate and always follow the configured self-tamper response. ADB and developer-options violations are likewise silent while "Block Debugging Features" is off. USB data-transfer violations are never suppressed.
 
 ## Developer & Verification Workflows
 

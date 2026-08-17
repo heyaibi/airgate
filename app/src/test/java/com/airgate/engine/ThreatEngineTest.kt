@@ -760,15 +760,53 @@ class ThreatEngineTest {
     }
 
     @Test
-    fun `suppressed self-defense breach records no pending alarm`() {
-        // DO_RESTRICTION_MISSING is suppressed when the device-protection posture
-        // alarm is off; a suppressed detection must not raise any alarm marker.
+    fun `self-defense breach bypasses the device-protection alarm toggle`() {
         repository.saveConfig(
-            AppConfig(isEnabled = true, dryRunMode = true, deviceProtectionAlarmEnabled = false)
+            AppConfig(
+                isEnabled = false,
+                dryRunMode = true,
+                graceWindowSeconds = 0,
+                deviceProtectionAlarmEnabled = false
+            )
         )
         threatEngine.processSelfDefenseBreach("restriction missing")
 
+        assertEquals(SecurityState.WIPING, repository.getSecurityState())
+        assertNotNull(repository.getPendingAlarm())
+    }
+
+    @Test
+    fun `self-defense ALARM_STREAK bypasses both gates and preserves configured tier`() {
+        repository.saveConfig(
+            AppConfig(
+                isEnabled = false,
+                dryRunMode = true,
+                graceWindowSeconds = 0,
+                deviceProtectionAlarmEnabled = false,
+                wipeThreshold = 3,
+                selfTamperTier = ResponseTier.ALARM_STREAK
+            )
+        )
+
+        threatEngine.processSelfDefenseBreach("signature tamper")
+
+        assertEquals(1, repository.getStreak())
+        assertEquals(SecurityState.ALARM_ACTIVE, repository.getSecurityState())
+        assertNotNull(repository.getPendingAlarm())
+    }
+
+    @Test
+    fun `ordinary device-protection breach remains suppressed when alarm is disabled`() {
+        repository.saveConfig(
+            AppConfig(isEnabled = true, dryRunMode = true, deviceProtectionAlarmEnabled = false)
+        )
+        threatEngine.processBreach(
+            breach(ViolationType.DO_RESTRICTION_MISSING, ResponseTier.ALARM_STREAK)
+        )
+
         assertEquals(SecurityState.ARMED_COMPLIANT, repository.getSecurityState())
+        assertEquals(0, repository.getStreak())
+        assertNotNull(repository.getVtReason(ViolationType.DO_RESTRICTION_MISSING))
         assertNull(repository.getPendingAlarm())
     }
 
@@ -845,19 +883,22 @@ class ThreatEngineTest {
     }
 
     @Test
-    fun `state tamper respects the device-protection alarm toggle when disabled`() {
+    fun `state tamper bypasses the device-protection alarm toggle`() {
         repository.saveConfig(
-            AppConfig(isEnabled = false, dryRunMode = true, deviceProtectionAlarmEnabled = false)
+            AppConfig(
+                isEnabled = false,
+                dryRunMode = true,
+                graceWindowSeconds = 0,
+                deviceProtectionAlarmEnabled = false
+            )
         )
 
         threatEngine.processStateTamperBreach("Protected state failed to decrypt (tamper)")
 
-        // Recorded for the audit trail, but no escalation while the toggle is off.
         val reason = repository.getVtReason(ViolationType.DO_RESTRICTION_MISSING)
         assertTrue(reason != null && reason.contains("tamper"))
-        assertEquals(SecurityState.ARMED_COMPLIANT, repository.getSecurityState())
-        assertEquals(0, repository.getStreak())
-        assertNull(repository.getPendingAlarm())
+        assertEquals(SecurityState.WIPING, repository.getSecurityState())
+        assertNotNull(repository.getPendingAlarm())
     }
 
     @Test
@@ -882,7 +923,7 @@ class ThreatEngineTest {
                 isEnabled = true,
                 dryRunMode = true,
                 graceWindowSeconds = 0,
-                deviceProtectionAlarmEnabled = true,
+                deviceProtectionAlarmEnabled = false,
                 wipeThreshold = 3,
                 selfTamperTier = ResponseTier.ALARM_STREAK
             )

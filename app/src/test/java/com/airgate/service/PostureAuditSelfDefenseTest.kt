@@ -252,9 +252,7 @@ class PostureAuditSelfDefenseTest {
             dummyContext, repository, dhizukuManager, threatEngine, policyEnforcer,
             selfDefenseManager = tampered
         )
-        // Self-defense breaches route through the DO_RESTRICTION_MISSING suppression
-        // gate, so the device-protection alarm must be enabled for them to escalate.
-        repository.saveConfig(armedConfig(deviceProtectionAlarmEnabled = true))
+        repository.saveConfig(armedConfig(deviceProtectionAlarmEnabled = false))
 
         audit.executeCheck()
 
@@ -300,19 +298,17 @@ class PostureAuditSelfDefenseTest {
     }
 
     @Test
-    fun executeCheck_tamperIsSuppressed_whenAlarmDisabled() {
+    fun executeCheck_signatureTamperEscalates_whenAlarmDisabled() {
         val tampered = managerWith(expectedHash = "abc123", currentHash = "0bad0bad")
         val audit = PostureAudit(
             dummyContext, repository, dhizukuManager, threatEngine, policyEnforcer,
             selfDefenseManager = tampered
         )
-        // With the device-protection alarm off the breach is recorded but must not
-        // escalate to a wipe.
         repository.saveConfig(armedConfig(deviceProtectionAlarmEnabled = false))
 
         audit.executeCheck()
 
-        assertEquals(SecurityState.ARMED_COMPLIANT, repository.getSecurityState())
+        assertEquals(SecurityState.WIPING, repository.getSecurityState())
     }
 
     // --- Protected-state tamper flag is processed before the enabled gate ---
@@ -380,11 +376,7 @@ class PostureAuditSelfDefenseTest {
     }
 
     @Test
-    fun executeCheck_tamperIsRecordedButNotEscalated_whenAlarmDisabled() {
-        // Consistency with the self-defense suppression contract: with the
-        // device-protection alarm off, a state tamper is recorded for the audit
-        // trail but must not wipe. The watchdog is disabled so the later audit
-        // steps cannot overwrite the recorded reason.
+    fun executeCheck_tamperEscalates_whenAlarmDisabled() {
         repository.saveConfig(disabledConfig(deviceProtectionAlarmEnabled = false))
         armTamperFlag()
 
@@ -392,7 +384,7 @@ class PostureAuditSelfDefenseTest {
 
         val reason = repository.getVtReason(ViolationType.DO_RESTRICTION_MISSING)
         assertTrue("the tamper must still be recorded", reason != null && reason.contains("tamper"))
-        assertEquals(SecurityState.ARMED_COMPLIANT, repository.getSecurityState())
+        assertEquals(SecurityState.WIPING, repository.getSecurityState())
         assertFalse(repository.consumeStateTamperFlag())
     }
 
@@ -493,7 +485,7 @@ class PostureAuditSelfDefenseTest {
     }
 
     @Test
-    fun checkTamperOnly_isRecordedButNotEscalated_whenAlarmDisabled() {
+    fun checkTamperOnly_escalates_whenAlarmDisabled() {
         repository.saveConfig(disabledConfig(deviceProtectionAlarmEnabled = false))
         armTamperFlag()
 
@@ -501,7 +493,7 @@ class PostureAuditSelfDefenseTest {
 
         val reason = repository.getVtReason(ViolationType.DO_RESTRICTION_MISSING)
         assertTrue("the tamper must still be recorded", reason != null && reason.contains("tamper"))
-        assertEquals(SecurityState.ARMED_COMPLIANT, repository.getSecurityState())
+        assertEquals(SecurityState.WIPING, repository.getSecurityState())
         assertFalse(repository.consumeStateTamperFlag())
     }
 
@@ -551,7 +543,7 @@ class PostureAuditSelfDefenseTest {
     }
 
     @Test
-    fun checkTamperOnly_recordsUnreadablePin_butNotEscalated_whenAlarmDisabled() {
+    fun checkTamperOnly_escalatesUnreadablePin_whenAlarmDisabled() {
         repository.saveConfig(disabledConfig(deviceProtectionAlarmEnabled = false))
         corruptPinMaterial()
 
@@ -559,7 +551,7 @@ class PostureAuditSelfDefenseTest {
 
         val reason = repository.getVtReason(ViolationType.DO_RESTRICTION_MISSING)
         assertTrue("the tamper must still be recorded", reason != null && reason.contains("tamper"))
-        assertEquals(SecurityState.ARMED_COMPLIANT, repository.getSecurityState())
+        assertEquals(SecurityState.WIPING, repository.getSecurityState())
         assertFalse(repository.consumeStateTamperFlag())
     }
 
