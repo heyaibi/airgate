@@ -19,7 +19,7 @@ package com.airgate.policy
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
 import android.content.Context
-import android.hardware.usb.UsbManager
+import android.os.Build
 import android.os.UserManager
 import android.provider.Settings
 import com.airgate.dhizuku.DhizukuManager
@@ -31,28 +31,59 @@ data class ShieldLayerStatus(
     val isOk: Boolean
 )
 
+internal data class ShieldWirelessRestrictions(
+    val wifiLocked: Boolean?,
+    val bluetoothLocked: Boolean,
+    val bluetoothSharingLocked: Boolean,
+    val nfcBeamLocked: Boolean,
+    val tetheringLocked: Boolean,
+    val cellularLocked: Boolean
+)
+
+internal data class ShieldUsbRestrictions(
+    val usbTransferLocked: Boolean,
+    val debuggingLocked: Boolean
+)
+
 /**
- * Performs live detection of the three shield layers shown on the dashboard.
- * Labels and statuses are derived from the device's actual state rather than
- * being hardcoded in the UI.
+ * Reports the three shield layers shown on the dashboard. Policy restrictions
+ * are authoritative for enforcement; unavailable runtime observations fail closed.
  */
 @SuppressLint("InlinedApi")
-class ShieldStatusChecker(private val context: Context) {
+class ShieldStatusChecker(
+    private val context: Context,
+    private val dhizukuAvailableReader: () -> Boolean = {
+        runCatching { DhizukuManager(context).isDhizukuAvailable() }.getOrDefault(false)
+    },
+    private val restrictionsReader: () -> android.os.Bundle? = {
+        val userManager = context.getSystemService(Context.USER_SERVICE) as? UserManager
+        runCatching { userManager?.userRestrictions }.getOrNull()
+    },
+    private val airplaneModeReader: () -> Boolean? = {
+        runCatching {
+            Settings.Global.getInt(context.contentResolver, Settings.Global.AIRPLANE_MODE_ON)
+        }.getOrNull()?.let { it != 0 }
+    },
+    private val bluetoothOnReader: () -> Boolean? = {
+        runCatching {
+            context.getSystemService(BluetoothManager::class.java)?.adapter?.isEnabled
+        }.getOrNull()
+    },
+    private val apiLevelReader: () -> Int = { Build.VERSION.SDK_INT }
+) {
 
     fun check(): List<ShieldLayerStatus> {
-        val resolver = context.contentResolver
-        val userManager = context.getSystemService(Context.USER_SERVICE) as UserManager
-        val restrictions = userManager.userRestrictions
+        val restrictions = restrictionsReader()
 
         return listOf(
             checkDhizuku(),
-            checkWirelessBlockade(resolver, restrictions),
-            checkUsbAdbGuard(resolver, restrictions)
+            checkWirelessBlockade(restrictions),
+            checkUsbAdbGuard(restrictions)
         )
     }
 
     private fun checkDhizuku(): ShieldLayerStatus {
-        val granted = runCatching { DhizukuManager(context).isDhizukuAvailable() }.getOrDefault(false)
+        val granted = runCatching { dhizukuAvailableReader() }.getOrDefault(false)
         return ShieldLayerStatus(
             title = "Dhizuku Device Owner",
             subtitle = if (granted) {
@@ -65,72 +96,121 @@ class ShieldStatusChecker(private val context: Context) {
         )
     }
 
-    private fun checkWirelessBlockade(
-        resolver: android.content.ContentResolver,
-        restrictions: android.os.Bundle
-    ): ShieldLayerStatus {
-        val airplaneOn = Settings.Global.getInt(resolver, Settings.Global.AIRPLANE_MODE_ON, 0) != 0
-        val bluetoothOff = runCatching {
-            context.getSystemService(BluetoothManager::class.java)?.adapter?.isEnabled != true
-        }.getOrDefault(true)
-        val wifiLocked = restrictions.getBoolean(UserManager.DISALLOW_CHANGE_WIFI_STATE, false)
-        val bluetoothLocked = restrictions.getBoolean(UserManager.DISALLOW_BLUETOOTH, false)
-        val tetheringLocked = restrictions.getBoolean(UserManager.DISALLOW_CONFIG_TETHERING, false) &&
-                restrictions.getBoolean(UserManager.DISALLOW_WIFI_TETHERING, false)
-        val cellularLocked = restrictions.getBoolean(UserManager.DISALLOW_DATA_ROAMING, false) &&
-                restrictions.getBoolean(UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS, false)
-
-        val ok = airplaneOn && bluetoothOff && wifiLocked && bluetoothLocked && tetheringLocked && cellularLocked
-
-        val openChannels = buildList {
-            if (!airplaneOn) add("airplane mode off")
-            if (!bluetoothOff) add("bluetooth on")
-            if (!wifiLocked) add("wifi changeable")
-            if (!bluetoothLocked) add("bluetooth unlocked")
-            if (!tetheringLocked) add("tethering allowed")
-            if (!cellularLocked) add("cellular config open")
-        }
-
-        return ShieldLayerStatus(
-            title = "Wireless Transceiver Blockade",
-            subtitle = if (ok) {
-                "Wi-Fi, Cellular, FM Radio & Bluetooth interfaces disabled"
-            } else {
-                "Open: ${openChannels.joinToString(" · ")}"
-            },
-            status = if (ok) "Blocked" else "Exposed",
-            isOk = ok
+    private fun checkWirelessBlockade(restrictions: android.os.Bundle?): ShieldLayerStatus {
+        return resolveWirelessBlockade(
+            airplaneOn = airplaneModeReader(),
+            bluetoothOn = bluetoothOnReader(),
+            restrictions = restrictions?.let { readWirelessRestrictions(it, apiLevelReader()) }
         )
     }
 
-    private fun checkUsbAdbGuard(
-        resolver: android.content.ContentResolver,
-        restrictions: android.os.Bundle
-    ): ShieldLayerStatus {
-        val adbDisabled = Settings.Global.getInt(resolver, Settings.Global.ADB_ENABLED, 0) == 0
-        val usbTransferLocked = restrictions.getBoolean(UserManager.DISALLOW_USB_FILE_TRANSFER, false)
-        val debuggingLocked = restrictions.getBoolean(UserManager.DISALLOW_DEBUGGING_FEATURES, false)
-        val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
-        val noHostDevice = runCatching { usbManager.deviceList.isEmpty() }.getOrDefault(true)
+    private fun checkUsbAdbGuard(restrictions: android.os.Bundle?): ShieldLayerStatus =
+        resolveUsbAdbGuard(restrictions?.let { readUsbRestrictions(it) })
 
-        val ok = adbDisabled && usbTransferLocked && debuggingLocked && noHostDevice
-
-        val openChannels = buildList {
-            if (!adbDisabled) add("adb enabled")
-            if (!usbTransferLocked) add("usb file transfer allowed")
-            if (!debuggingLocked) add("debugging enabled")
-            if (!noHostDevice) add("usb device attached")
+    internal companion object {
+        fun resolveWirelessBlockade(
+            airplaneOn: Boolean?,
+            bluetoothOn: Boolean?,
+            restrictions: ShieldWirelessRestrictions?
+        ): ShieldLayerStatus {
+            val openChannels = buildList {
+                when (airplaneOn) {
+                    false -> add("airplane mode off")
+                    null -> add("airplane state unavailable")
+                    true -> Unit
+                }
+                when (bluetoothOn) {
+                    true -> add("bluetooth on")
+                    null -> add("bluetooth state unavailable")
+                    false -> Unit
+                }
+                if (restrictions == null) {
+                    add("wireless policy unavailable")
+                } else {
+                    when (restrictions.wifiLocked) {
+                        false -> add("wifi changeable")
+                        null -> add("wifi policy unavailable")
+                        true -> Unit
+                    }
+                    if (!restrictions.bluetoothLocked) add("bluetooth policy open")
+                    if (!restrictions.bluetoothSharingLocked) add("bluetooth sharing allowed")
+                    if (!restrictions.nfcBeamLocked) add("NFC beam allowed")
+                    if (!restrictions.tetheringLocked) add("tethering allowed")
+                    if (!restrictions.cellularLocked) add("cellular policy open")
+                }
+            }
+            val isOpen = airplaneOn == false || bluetoothOn == true ||
+                restrictions?.let {
+                    it.wifiLocked == false || !it.bluetoothLocked || !it.bluetoothSharingLocked ||
+                        !it.nfcBeamLocked || !it.tetheringLocked || !it.cellularLocked
+                } == true
+            val hasUnknown = airplaneOn == null || bluetoothOn == null || restrictions == null ||
+                restrictions.wifiLocked == null
+            return ShieldLayerStatus(
+                title = "Wireless Transceiver Blockade",
+                subtitle = when {
+                    isOpen -> "Open: ${openChannels.joinToString(" · ")}"
+                    hasUnknown -> "Unknown: ${openChannels.joinToString(" · ")}"
+                    else -> "Policy blocked; airplane mode on and Bluetooth off"
+                },
+                status = when {
+                    isOpen -> "Exposed"
+                    hasUnknown -> "Unknown"
+                    else -> "Blocked"
+                },
+                isOk = !isOpen && !hasUnknown
+            )
         }
 
-        return ShieldLayerStatus(
-            title = "USB & ADB Guard",
-            subtitle = if (ok) {
-                "Data host-links and debugging blocked"
-            } else {
-                "Open: ${openChannels.joinToString(" · ")}"
-            },
-            status = if (ok) "Secured" else "At Risk",
-            isOk = ok
-        )
+        internal fun readWirelessRestrictions(
+            bundle: android.os.Bundle,
+            apiLevel: Int
+        ): ShieldWirelessRestrictions =
+            ShieldWirelessRestrictions(
+                wifiLocked = if (apiLevel >= Build.VERSION_CODES.TIRAMISU) {
+                    bundle.getBoolean(UserManager.DISALLOW_CHANGE_WIFI_STATE)
+                } else {
+                    null
+                },
+                bluetoothLocked = bundle.getBoolean(UserManager.DISALLOW_BLUETOOTH),
+                bluetoothSharingLocked = bundle.getBoolean(UserManager.DISALLOW_BLUETOOTH_SHARING),
+                nfcBeamLocked = bundle.getBoolean(UserManager.DISALLOW_OUTGOING_BEAM),
+                tetheringLocked = bundle.getBoolean(UserManager.DISALLOW_CONFIG_TETHERING),
+                cellularLocked = bundle.getBoolean(UserManager.DISALLOW_DATA_ROAMING) &&
+                    bundle.getBoolean(UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS)
+            )
+
+        internal fun readUsbRestrictions(bundle: android.os.Bundle): ShieldUsbRestrictions =
+            ShieldUsbRestrictions(
+                usbTransferLocked = bundle.getBoolean(UserManager.DISALLOW_USB_FILE_TRANSFER),
+                debuggingLocked = bundle.getBoolean(UserManager.DISALLOW_DEBUGGING_FEATURES)
+            )
+
+        fun resolveUsbAdbGuard(restrictions: ShieldUsbRestrictions?): ShieldLayerStatus {
+            val openChannels = buildList {
+                if (restrictions == null) {
+                    add("USB and debugging policy unavailable")
+                } else {
+                    if (!restrictions.usbTransferLocked) add("USB file transfer allowed")
+                    if (!restrictions.debuggingLocked) add("debugging enabled")
+                }
+            }
+            val isUnknown = restrictions == null
+            val isOpen = openChannels.isNotEmpty() && !isUnknown
+            return ShieldLayerStatus(
+                title = "USB & ADB Guard",
+                subtitle = when {
+                    isOpen -> "Open: ${openChannels.joinToString(" · ")}"
+                    isUnknown -> "Unknown: ${openChannels.joinToString(" · ")}"
+                    else -> "USB file transfer and debugging policy blocked"
+                },
+                status = when {
+                    isOpen -> "At Risk"
+                    isUnknown -> "Unknown"
+                    else -> "Secured"
+                },
+                isOk = !isOpen && !isUnknown
+            )
+        }
     }
 }

@@ -45,7 +45,7 @@ The dashboard is your daily overview and the place you will check most often.
 
 When you'd use it: leave it **on** while the phone sits in storage. Turn it **off** only when you want to silence everything (for example, while you are deliberately working on the phone during setup or recovery). Note that turning it off pauses enforcement but the service still runs.
 
-**The Shield Status card.** This is a live health check of the three defense layers: **Dhizuku Device Owner** authority, **Wireless Transceiver Blockade**, and **USB & ADB Guard**. Each row reads the device's *actual* state and reports "Enforced / Blocked / Secured" or a list of what is open (for example "Open: adb enabled · usb device attached"). If a layer ever shows "Exposed" or "At Risk", investigate before arming — it means a door is open.
+**The Shield Status card.** This is a live health check of the three defense layers: **Dhizuku Device Owner** authority, **Wireless Transceiver Blockade**, and **USB & ADB Guard**. The wireless row combines readable radio observations with the policy restrictions Airgate controls; the USB row reports policy enforcement rather than guessing from redacted ADB settings or incomplete USB enumeration. Each row reports "Enforced / Blocked / Secured", "Unknown" when Android withholds a required fact, or a list of what is open. Treat "Unknown", "Exposed", and "At Risk" as reasons to investigate before arming.
 
 **Clear Threat Streak.** The red button below the shield card zeroes the score and requires your Armed PIN. You'd use it after a false alarm, or after you have fixed the cause of a breach, to start the count fresh.
 
@@ -82,7 +82,7 @@ One entry is special: **Wi-Fi transceiver enabled** is **LOG_ONLY** — it appea
 The other Guide tab explains the *defence* side of the shield, as opposed to the *detection* catalogue. It shows the four defense layers and how many are currently active:
 
 - **Network & Connectivity** — monitors real-time path attempts (Wi-Fi, mobile data, VPN, ethernet) so nothing can exfiltrate. If the monitor's own connectivity listener cannot be registered, it retries automatically with backoff and raises a "Network monitor registration failed" violation instead of failing silently — detection never quietly goes dark.
-- **Wireless Transceiver Blockade** — enforces airplane mode and shuts down Wi-Fi, Bluetooth, NFC, and FM radio.
+- **Wireless Transceiver Blockade** — enforces airplane mode plus Wi-Fi, Bluetooth, Bluetooth-sharing, tethering, mobile-network, and NFC-beam restrictions. FM radio is not represented by this status row.
 - **USB & ADB Prevention** — blocks USB data transfers and ADB debugging so nothing can be pulled off by cable.
 - **Self-Defense Audit** — verifies Device Owner authority and pins the app's own signature.
 

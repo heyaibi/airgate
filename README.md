@@ -28,7 +28,7 @@
 
 - **Armed PIN lock** — PBKDF2-HMAC-SHA256 with 120,000 rounds and a per-install salt, 5-attempt lockout with exponential backoff; the same PIN guards alarm disarm, streak clearing, and settings. PIN material and settings are encrypted at rest in the Android Keystore, and lockout runs on a monotonic clock — a manual clock change cannot bypass it.
 - **Arming gate** — the watchdog can only be switched on while the Armed PIN is configured and readable, the app can post notifications, and Bluetooth state can be read (BLUETOOTH_CONNECT), so a device whose alarm path could be entirely silent or whose Bluetooth detection is blind can never be armed. Disabling is always allowed.
-- **Dashboard** — live threat-score hero meter, Protection master switch, and real-time Shield Status of each defense layer.
+- **Dashboard** — live threat-score hero meter, Protection master switch, and fail-closed Shield Status of each defense layer; Android-redacted or unavailable facts are shown as Unknown rather than secured.
 - **Security Activity** — current threat score and each active violation category with occurrence counts and reasons.
 - **Violations guide** — a searchable, filterable catalogue of every detection, plus a Protection Vectors overview of the shield architecture.
 - **Settings** — required-permission checker, thresholds & timers, posture/tamper alarms, hardening & wipe scope, and a one-tap dry-run simulation harness (Wi-Fi, Bluetooth, USB) that injects synthetic breaches.
@@ -48,7 +48,7 @@ Regenerate them with `make screens`, `make screens-dark`, and `make mockups` (th
 
 - **Zero Network Purity:** 100% offline application. `android.permission.INTERNET` is explicitly omitted from `AndroidManifest.xml`.
 - **Dhizuku Device Owner Interop:** Executes privileged policy enforcement (`DevicePolicyManager`) via Binder calls without requiring factory resets.
-- **Weighted Tiered Accounting:** Monitors 14 multi-vector signals (Wi-Fi transceiver, validated network, airplane mode, Bluetooth, USB tethering / host-link / data function, ADB, OTG ethernet, developer options, system clock skew, SIM state, device-protection loss, monitor registration health) and maintains persistent threat streaks against configurable wipe thresholds.
+- **Weighted Tiered Accounting:** Monitors 12 multi-vector signals (Wi-Fi transceiver, validated network, airplane mode, Bluetooth, USB tethering / host-link / data function, OTG ethernet, system clock skew, SIM state, device-protection loss, monitor registration health) and maintains persistent threat streaks against configurable wipe thresholds. ADB and developer-options protection is verified through device-policy restrictions rather than redacted settings.
 - **Self-Defense Audit:** Periodically checks DO status and package signature integrity.
 - **Dry-Run Harness:** Offline simulation mode for safe dry-run testing of threat triggers without destructive system resets.
 - **Notification-Gated Arming:** The watchdog can only be *newly* enabled while the Armed PIN is usable, the app can post notifications, and Bluetooth state can be read, so a device whose alarm path could be entirely silent or whose Bluetooth detection is blind is never armed.

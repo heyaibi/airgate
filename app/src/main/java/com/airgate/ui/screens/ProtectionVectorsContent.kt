@@ -180,7 +180,7 @@ fun ProtectionVectorsContent(repository: SecurityStateRepository) {
                     icon = Icons.Filled.Wifi,
                     title = "Network & Connectivity",
                     explanation = "Monitors real-time network path attempts (Wi-Fi, Mobile Data, VPN, Ethernet) to ensure zero data exfiltration.",
-                    status = "Active"
+                    status = resolveVectorStatus(shieldStatuses, layerIndex = null)
                 )
                 HorizontalDivider(
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
@@ -189,8 +189,8 @@ fun ProtectionVectorsContent(repository: SecurityStateRepository) {
                 VectorStatusRow(
                     icon = Icons.Filled.AirplanemodeActive,
                     title = "Wireless Transceiver Blockade",
-                    explanation = "Enforces Airplane mode and shuts down Wi-Fi, Bluetooth, NFC, and FM Radio interfaces automatically.",
-                    status = "Active"
+                    explanation = "Enforces Airplane mode plus Wi-Fi, Bluetooth, Bluetooth-sharing, tethering, mobile-network, and NFC-beam restrictions.",
+                    status = resolveVectorStatus(shieldStatuses, layerIndex = 1)
                 )
                 HorizontalDivider(
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
@@ -200,7 +200,7 @@ fun ProtectionVectorsContent(repository: SecurityStateRepository) {
                     icon = Icons.Filled.Usb,
                     title = "USB & ADB Prevention",
                     explanation = "Blocks USB data file transfers and ADB debugging attempts to prevent physical cable extraction.",
-                    status = "Active"
+                    status = resolveVectorStatus(shieldStatuses, layerIndex = 2)
                 )
                 HorizontalDivider(
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
@@ -210,13 +210,22 @@ fun ProtectionVectorsContent(repository: SecurityStateRepository) {
                     icon = Icons.Filled.Shield,
                     title = "Self-Defense Audit",
                     explanation = "Verifies Device Owner authority and pins the app's own signature.",
-                    status = "Active"
+                    status = resolveVectorStatus(shieldStatuses, layerIndex = 0)
                 )
             }
         }
 
         Spacer(modifier = Modifier.height(20.dp))
     }
+}
+
+internal fun resolveVectorStatus(
+    shieldStatuses: List<ShieldLayerStatus>,
+    layerIndex: Int?
+): String = when {
+    layerIndex == null -> "Active"
+    shieldStatuses.isEmpty() -> "Checking…"
+    else -> shieldStatuses.getOrNull(layerIndex)?.status ?: "Unknown"
 }
 
 @Composable
