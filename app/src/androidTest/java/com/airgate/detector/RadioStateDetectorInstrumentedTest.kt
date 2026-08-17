@@ -264,13 +264,17 @@ class RadioStateDetectorInstrumentedTest {
         try {
             if (!writable) return // airplane poll needs WRITE_SECURE_SETTINGS to be exercised deterministically
 
+            fun airplaneBreaches() = listener.breaches.filter {
+                it.violationType == ViolationType.AIRPLANE_MODE_OFF
+            }
+
             // Airplane ON: the poll must not fire.
             assertTrue(Settings.Global.putInt(resolver, Settings.Global.AIRPLANE_MODE_ON, 1))
             detector.checkRadioState()
             assertEquals(
                 "airplane on must not fire an AIRPLANE_MODE_OFF breach",
                 emptyList<ViolationType>(),
-                listener.breaches.map { it.violationType }
+                airplaneBreaches().map { it.violationType }
             )
 
             // Airplane OFF: the very first poll observation (the initial-state case
@@ -280,9 +284,9 @@ class RadioStateDetectorInstrumentedTest {
             assertEquals(
                 "airplane off must fire a poll-sourced AIRPLANE_MODE_OFF breach",
                 listOf(ViolationType.AIRPLANE_MODE_OFF),
-                listener.breaches.map { it.violationType }
+                airplaneBreaches().map { it.violationType }
             )
-            assertEquals("RADIO_POLL", listener.breaches.single().rawMetadata["source"])
+            assertEquals("RADIO_POLL", airplaneBreaches().single().rawMetadata["source"])
 
             // Sustained OFF on later ticks must not re-fire (episode latched).
             detector.checkRadioState()

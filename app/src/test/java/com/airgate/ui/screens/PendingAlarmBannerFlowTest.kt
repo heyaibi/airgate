@@ -21,6 +21,7 @@ import android.content.SharedPreferences
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
@@ -83,7 +84,11 @@ class PendingAlarmBannerFlowTest {
         composeRule.onNode(hasSetTextAction()).performTextReplacement(PIN)
         composeRule.onNodeWithText("Acknowledge").performClick()
 
-        composeRule.waitUntil(timeoutMillis = 15_000) { repository.getPendingAlarm() == null }
+        composeRule.waitUntil(timeoutMillis = 15_000) {
+            repository.getPendingAlarm() == null &&
+                composeRule.onAllNodesWithText("SECURITY ALARM — ACTION REQUIRED")
+                    .fetchSemanticsNodes().isEmpty()
+        }
         composeRule.onNodeWithText("SECURITY ALARM — ACTION REQUIRED").assertDoesNotExist()
         // Acknowledging a plain alarm must not disturb the security state.
         assertEquals(SecurityState.ALARM_ACTIVE, repository.getSecurityState())
