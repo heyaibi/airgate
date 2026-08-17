@@ -26,16 +26,29 @@ import com.airgate.domain.model.AppConfig
  * Dry-run only changes whether the destructive wipe/remove executes (see
  * DhizukuDestructiveOps). `config` is retained on the signatures for uniformity with
  * the destructive methods but is unused here.
+ *
+ * Every privileged call consults [isInvalidated] immediately before the binder
+ * invocation so a transaction whose caller has already timed out, been
+ * interrupted, or seen the executor shut down refuses to apply the policy
+ * change. A late policy write is just as much a security failure as a late
+ * wipe: the caller has already reported failure to the owner.
  */
 internal class DhizukuPolicyWriter(
     private val bridge: DhizukuDpmBridge
 ) {
-    fun setGlobalSetting(key: String, value: String, config: AppConfig): Boolean {
+    fun setGlobalSetting(key: String, value: String, config: AppConfig, isInvalidated: () -> Boolean): Boolean {
+        if (isInvalidated()) return false
         val admin = bridge.getAdminComponent() ?: return false
+        if (isInvalidated()) return false
         if (bridge.wrapper != null) {
-            return bridge.wrapper.setGlobalSetting(admin, key, value)
+            return try {
+                bridge.wrapper.setGlobalSetting(admin, key, value)
+            } catch (e: Exception) {
+                false
+            }
         }
         val dpm = bridge.wrappedDpm() ?: return false
+        if (isInvalidated()) return false
         return try {
             dpm.setGlobalSetting(admin, key, value)
             true
@@ -44,12 +57,19 @@ internal class DhizukuPolicyWriter(
         }
     }
 
-    fun addUserRestriction(restrictionKey: String, config: AppConfig): Boolean {
+    fun addUserRestriction(restrictionKey: String, config: AppConfig, isInvalidated: () -> Boolean): Boolean {
+        if (isInvalidated()) return false
         val admin = bridge.getAdminComponent() ?: return false
+        if (isInvalidated()) return false
         if (bridge.wrapper != null) {
-            return bridge.wrapper.addUserRestriction(admin, restrictionKey)
+            return try {
+                bridge.wrapper.addUserRestriction(admin, restrictionKey)
+            } catch (e: Exception) {
+                false
+            }
         }
         val dpm = bridge.wrappedDpm() ?: return false
+        if (isInvalidated()) return false
         return try {
             dpm.addUserRestriction(admin, restrictionKey)
             true
@@ -58,12 +78,19 @@ internal class DhizukuPolicyWriter(
         }
     }
 
-    fun clearUserRestriction(restrictionKey: String, config: AppConfig): Boolean {
+    fun clearUserRestriction(restrictionKey: String, config: AppConfig, isInvalidated: () -> Boolean): Boolean {
+        if (isInvalidated()) return false
         val admin = bridge.getAdminComponent() ?: return false
+        if (isInvalidated()) return false
         if (bridge.wrapper != null) {
-            return bridge.wrapper.clearUserRestriction(admin, restrictionKey)
+            return try {
+                bridge.wrapper.clearUserRestriction(admin, restrictionKey)
+            } catch (e: Exception) {
+                false
+            }
         }
         val dpm = bridge.wrappedDpm() ?: return false
+        if (isInvalidated()) return false
         return try {
             dpm.clearUserRestriction(admin, restrictionKey)
             true

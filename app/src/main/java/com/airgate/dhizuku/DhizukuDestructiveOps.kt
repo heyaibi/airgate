@@ -31,6 +31,11 @@ import com.airgate.domain.model.WipeResult
  * the wipe was performed. The only honest signals are "the system accepted the
  * request" (the call returned without throwing) and "the system refused it" (it
  * threw, or no device-owner authority is available). Success is never fabricated.
+ *
+ * Every entry point consults [isInvalidated] before invoking the destructive
+ * binder call so a transaction whose caller has already timed out, been
+ * interrupted, or seen the executor shut down refuses to issue the platform
+ * wipe even if the worker thread has not been interrupted.
  */
 internal class DhizukuDestructiveOps(
     private val bridge: DhizukuDpmBridge,
@@ -40,7 +45,8 @@ internal class DhizukuDestructiveOps(
      * Requests a full factory reset. Returns [WipeResult.SIMULATED] in dry-run
      * mode (no destructive call is made), [WipeResult.ACCEPTED] when the
      * device-owner authority accepted the request, and [WipeResult.REJECTED]
-     * when the request was refused or no authority is available.
+     * when the request was refused, no authority is available, or the
+     * transaction was invalidated by its caller.
      *
      * On API 34+ the device-owner `wipeDevice` API is used: `wipeData` throws
      * `IllegalStateException` on the primary user (the only user a device owner
@@ -48,18 +54,21 @@ internal class DhizukuDestructiveOps(
      * Below API 34 `wipeData` still performs a device-wide reset from the
      * primary user and is the only option available.
      */
-    fun wipeDevice(flags: Int, config: AppConfig): WipeResult {
+    fun wipeDevice(flags: Int, config: AppConfig, isInvalidated: () -> Boolean): WipeResult {
         if (config.dryRunMode) {
             return WipeResult.SIMULATED
         }
+        if (isInvalidated()) return WipeResult.REJECTED
         if (bridge.wrapper != null) {
             return try {
-                bridge.wrapper.wipeDevice(flags).toWipeResult()
+                if (isInvalidated()) WipeResult.REJECTED
+                else bridge.wrapper.wipeDevice(flags).toWipeResult()
             } catch (e: Exception) {
                 WipeResult.REJECTED
             }
         }
         val dpm = bridge.wrappedDpm() ?: return WipeResult.REJECTED
+        if (isInvalidated()) return WipeResult.REJECTED
         return try {
             performPlatformWipe(dpm, flags)
             WipeResult.ACCEPTED

@@ -59,7 +59,7 @@ class DhizukuPlatformWipeApi34Test {
 
     @Test
     fun `a successful wipeDevice platform call is reported as ACCEPTED`() {
-        val result = ops.wipeDevice(flags = 0x8, config = AppConfig(dryRunMode = false))
+        val result = ops.wipeDevice(flags = 0x8, config = AppConfig(dryRunMode = false), isInvalidated = { false })
 
         assertEquals(WipeResult.ACCEPTED, result)
         assertEquals(0x8, shadow.lastWipeFlags)
@@ -70,7 +70,7 @@ class DhizukuPlatformWipeApi34Test {
     fun `a throwing wipeDevice platform call is reported as REJECTED`() {
         shadow.wipeThrows = true
 
-        val result = ops.wipeDevice(flags = 0x8, config = AppConfig(dryRunMode = false))
+        val result = ops.wipeDevice(flags = 0x8, config = AppConfig(dryRunMode = false), isInvalidated = { false })
 
         assertEquals(WipeResult.REJECTED, result)
         assertEquals(0x8, shadow.lastWipeFlags)
@@ -79,9 +79,18 @@ class DhizukuPlatformWipeApi34Test {
 
     @Test
     fun `dry-run never invokes the platform wipe`() {
-        val result = ops.wipeDevice(flags = 0x8, config = AppConfig(dryRunMode = true))
+        val result = ops.wipeDevice(flags = 0x8, config = AppConfig(dryRunMode = true), isInvalidated = { false })
 
         assertEquals(WipeResult.SIMULATED, result)
+        assertEquals(-1, shadow.lastWipeFlags)
+        assertEquals(null, shadow.lastWipeCall)
+    }
+
+    @Test
+    fun `an invalidated wipe never invokes the platform wipe`() {
+        val result = ops.wipeDevice(flags = 0x8, config = AppConfig(dryRunMode = false), isInvalidated = { true })
+
+        assertEquals(WipeResult.REJECTED, result)
         assertEquals(-1, shadow.lastWipeFlags)
         assertEquals(null, shadow.lastWipeCall)
     }

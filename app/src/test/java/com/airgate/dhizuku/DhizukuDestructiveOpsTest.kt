@@ -74,7 +74,7 @@ class DhizukuDestructiveOpsTest {
 
     @Test
     fun `dry-run reports a simulation and never calls the destructive API`() {
-        val result = ops.wipeDevice(flags = 0x8, config = AppConfig(dryRunMode = true))
+        val result = ops.wipeDevice(flags = 0x8, config = AppConfig(dryRunMode = true), isInvalidated = { false })
 
         assertEquals(WipeResult.SIMULATED, result)
         assertFalse(wrapper.wipeCalled)
@@ -84,7 +84,7 @@ class DhizukuDestructiveOpsTest {
     fun `an accepted wipe is reported as ACCEPTED`() {
         wrapper.wipeAccepted = true
 
-        val result = ops.wipeDevice(flags = 0x8, config = AppConfig(dryRunMode = false))
+        val result = ops.wipeDevice(flags = 0x8, config = AppConfig(dryRunMode = false), isInvalidated = { false })
 
         assertEquals(WipeResult.ACCEPTED, result)
         assertTrue(wrapper.wipeCalled)
@@ -94,7 +94,7 @@ class DhizukuDestructiveOpsTest {
     fun `a refused wipe is reported as REJECTED`() {
         wrapper.wipeAccepted = false
 
-        val result = ops.wipeDevice(flags = 0x8, config = AppConfig(dryRunMode = false))
+        val result = ops.wipeDevice(flags = 0x8, config = AppConfig(dryRunMode = false), isInvalidated = { false })
 
         assertEquals(WipeResult.REJECTED, result)
         assertTrue(wrapper.wipeCalled)
@@ -104,7 +104,7 @@ class DhizukuDestructiveOpsTest {
     fun `a throwing wipe call is reported as REJECTED`() {
         wrapper.wipeThrows = true
 
-        val result = ops.wipeDevice(flags = 0x8, config = AppConfig(dryRunMode = false))
+        val result = ops.wipeDevice(flags = 0x8, config = AppConfig(dryRunMode = false), isInvalidated = { false })
 
         assertEquals(WipeResult.REJECTED, result)
         assertTrue(wrapper.wipeCalled)
@@ -112,7 +112,7 @@ class DhizukuDestructiveOpsTest {
 
     @Test
     fun `wipe flags are forwarded to the destructive call`() {
-        ops.wipeDevice(flags = 0x8009, config = AppConfig(dryRunMode = false))
+        ops.wipeDevice(flags = 0x8009, config = AppConfig(dryRunMode = false), isInvalidated = { false })
 
         assertEquals(0x8009, wrapper.wipeFlags)
     }
@@ -123,7 +123,7 @@ class DhizukuDestructiveOpsTest {
         // resolves to null, so the wipe must fail closed rather than claim success.
         val noAuthorityOps = opsWith(wrapper = null, sdkInt = 35)
 
-        val result = noAuthorityOps.wipeDevice(flags = 0x8, config = AppConfig(dryRunMode = false))
+        val result = noAuthorityOps.wipeDevice(flags = 0x8, config = AppConfig(dryRunMode = false), isInvalidated = { false })
 
         assertEquals(WipeResult.REJECTED, result)
     }

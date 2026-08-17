@@ -191,9 +191,9 @@ class DhizukuServerIdentityTest {
         )
         val writer = DhizukuPolicyWriter(bridge)
 
-        assertFalse(writer.setGlobalSetting("key", "value", AppConfig()))
-        assertFalse(writer.addUserRestriction("restriction", AppConfig()))
-        assertFalse(writer.clearUserRestriction("restriction", AppConfig()))
+        assertFalse(writer.setGlobalSetting("key", "value", AppConfig(), isInvalidated = { false }))
+        assertFalse(writer.addUserRestriction("restriction", AppConfig(), isInvalidated = { false }))
+        assertFalse(writer.clearUserRestriction("restriction", AppConfig(), isInvalidated = { false }))
         assertTrue(wrapper.calls == 0)
     }
 }
