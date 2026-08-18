@@ -33,7 +33,10 @@ class WipeDeadlineTest {
     private val prefs = InMemorySharedPreferences()
 
     private fun repositoryAt(elapsed: () -> Long): SecurityStateRepository =
-        SecurityStateRepository(prefs, JvmPrefsCrypto(), { true }, { true }, elapsed)
+        SecurityStateRepository(
+            prefs, JvmPrefsCrypto(), { true }, { true },
+            elapsedRealtimeProvider = elapsed
+        )
 
     @Test
     fun `a recorded deadline reports the remaining time on the monotonic clock`() {

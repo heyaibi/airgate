@@ -28,10 +28,12 @@ import com.airgate.domain.model.SecurityState
 import com.airgate.engine.GraceWipeScheduler
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import com.airgate.testutil.crypto.AndroidKeyStoreRule
 import org.junit.Rule
+import org.robolectric.shadows.ShadowAlarmManager
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -50,6 +52,14 @@ class GraceWipeReceiverStorageTest {
 
     private val context: Context
         get() = ApplicationProvider.getApplicationContext<Context>()
+
+    @Before
+    fun setUp() {
+        // The early-fire re-arm must succeed as an exact alarm, matching a device
+        // where the app holds the SCHEDULE_EXACT_ALARM access. The receiver's real
+        // scheduler refuses to re-arm inexactly and would otherwise fail closed.
+        ShadowAlarmManager.setCanScheduleExactAlarms(true)
+    }
 
     private fun armCountdownRepository(): SecurityStateRepository {
         val prefs = context.getSharedPreferences(
@@ -82,8 +92,9 @@ class GraceWipeReceiverStorageTest {
         { 0L }
     ) {
         val scheduleDelays = mutableListOf<Long>()
-        override fun scheduleDelay(delayMs: Long) {
+        override fun scheduleDelay(delayMs: Long): GraceWipeScheduler.WipeScheduleResult {
             scheduleDelays.add(delayMs)
+            return GraceWipeScheduler.WipeScheduleResult.EXACT_SCHEDULED
         }
     }
 

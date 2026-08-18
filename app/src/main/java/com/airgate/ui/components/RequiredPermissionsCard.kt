@@ -69,7 +69,9 @@ fun RequiredPermissionsCard(
     notificationsGranted: Boolean,
     onNotificationsGrantedChange: (Boolean) -> Unit,
     bluetoothConnectGranted: Boolean,
-    onBluetoothConnectGrantedChange: (Boolean) -> Unit
+    onBluetoothConnectGrantedChange: (Boolean) -> Unit,
+    exactAlarmGranted: Boolean,
+    onExactAlarmGrantedChange: (Boolean) -> Unit
 ) {
     val notificationsPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -79,7 +81,8 @@ fun RequiredPermissionsCard(
         ActivityResultContracts.RequestPermission()
     ) { granted -> onBluetoothConnectGrantedChange(granted) }
 
-    val requiredGranted = dhizukuGranted && overlayGranted && notificationsGranted && bluetoothConnectGranted
+    val requiredGranted = dhizukuGranted && overlayGranted && notificationsGranted &&
+        bluetoothConnectGranted && exactAlarmGranted
     ElevatedCard(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.elevatedCardColors(
@@ -323,6 +326,56 @@ fun RequiredPermissionsCard(
                 )
             ) {
                 Text("Allow Bluetooth Detection", fontWeight = FontWeight.SemiBold)
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+
+            // Exact alarms (SCHEDULE_EXACT_ALARM / "Alarms & reminders" access)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Exact alarms", modifier = Modifier.weight(1f).padding(end = 16.dp), fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = if (exactAlarmGranted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer
+                ) {
+                    Text(
+                        text = if (exactAlarmGranted) "Granted" else "Required",
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (exactAlarmGranted) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
+            Text(
+                text = "The precise wipe countdown is armed as an exact alarm; without this access its deadline could never be guaranteed. Grant “Alarms & reminders” in system settings.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 16.sp
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                Button(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                                    data = "package:${context.packageName}".toUri()
+                                }
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (exactAlarmGranted) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.error,
+                        contentColor = if (exactAlarmGranted) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onError
+                    )
+                ) {
+                    Text("Allow Exact Alarms", fontWeight = FontWeight.SemiBold)
+                }
             }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))

@@ -25,6 +25,8 @@ import com.airgate.domain.model.SecurityState
 import com.airgate.engine.GraceWipeScheduler
 import com.airgate.testutil.InMemorySharedPreferences
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -44,8 +46,10 @@ class GraceWipeReceiverTest {
 
     private class RecordingGraceWipeScheduler : GraceWipeScheduler(DummyContext(), { 0L }) {
         val scheduleDelays = mutableListOf<Long>()
-        override fun scheduleDelay(delayMs: Long) {
+        var scheduleDelayResult = GraceWipeScheduler.WipeScheduleResult.EXACT_SCHEDULED
+        override fun scheduleDelay(delayMs: Long): GraceWipeScheduler.WipeScheduleResult {
             scheduleDelays.add(delayMs)
+            return scheduleDelayResult
         }
     }
 
@@ -245,5 +249,81 @@ class GraceWipeReceiverTest {
 
         assertEquals(emptyList<Long>(), scheduler.scheduleDelays)
         assertEquals(emptyList<Long>(), logger.rearmedMs)
+    }
+
+    // --- Fail-closed re-arm: an early fire whose precise re-arm cannot be armed ---
+
+    @Test
+    fun rearmRemainingDelay_returnsTrueWhenScheduledExactly() {
+        val scheduler = RecordingGraceWipeScheduler()
+        val logger = RecordingRearmLogger()
+
+        val rearmed = receiverWith(scheduler, logger)
+            .rearmRemainingDelay(context, deadline = 160_000L, now = 100_000L)
+
+        assertTrue(rearmed)
+        assertEquals(listOf(60_000L), scheduler.scheduleDelays)
+    }
+
+    @Test
+    fun rearmRemainingDelay_returnsFalseWhenTheExactArmIsUnavailable() {
+        val scheduler = RecordingGraceWipeScheduler().apply {
+            scheduleDelayResult = GraceWipeScheduler.WipeScheduleResult.EXACT_UNAVAILABLE
+        }
+        val logger = RecordingRearmLogger()
+
+        val rearmed = receiverWith(scheduler, logger)
+            .rearmRemainingDelay(context, deadline = 160_000L, now = 100_000L)
+
+        assertFalse(rearmed)
+        assertEquals(listOf(60_000L), scheduler.scheduleDelays)
+    }
+
+    @Test
+    fun rearmRemainingDelay_returnsTrueWhenNothingIsLeftToRearm() {
+        val scheduler = RecordingGraceWipeScheduler()
+        val logger = RecordingRearmLogger()
+
+        val rearmed = receiverWith(scheduler, logger)
+            .rearmRemainingDelay(context, deadline = 100_000L, now = 150_000L)
+
+        assertTrue(rearmed)
+        assertEquals(emptyList<Long>(), scheduler.scheduleDelays)
+    }
+
+    @Test
+    fun earlyFire_whenThePreciseRearmFails_executesTheWipeInsteadOfSkippingIt() {
+        // If the alarm fires early and the remaining delay cannot be re-armed as an
+        // exact alarm, the countdown would silently lose its guarantee. The receiver
+        // must fail closed to the wipe rather than drop the deadline entirely.
+        val repository = countdownRepository()
+        val scheduler = RecordingGraceWipeScheduler().apply {
+            scheduleDelayResult = GraceWipeScheduler.WipeScheduleResult.SCHEDULING_FAILED
+        }
+        val logger = RecordingRearmLogger()
+
+        receiverWith(scheduler, logger)
+            .executeIfDeadlineReached(context, repository, deadline = 150_000L, now = 100_000L)
+
+        assertEquals(SecurityState.WIPING, repository.getSecurityState())
+        assertEquals(listOf(50_000L), scheduler.scheduleDelays)
+        assertEquals(
+            "the receiver's fail-closed wipe must record the exact-alarm-loss origin",
+            com.airgate.engine.ThreatEngine.WIPE_EXECUTED_EXACT_LOST_CATEGORY,
+            repository.getPendingAlarm()?.category
+        )
+    }
+
+    @Test
+    fun earlyFire_whenThePreciseRearmSucceeds_skipsTheWipeAndRearms() {
+        val repository = countdownRepository()
+        val scheduler = RecordingGraceWipeScheduler()
+        val logger = RecordingRearmLogger()
+
+        receiverWith(scheduler, logger)
+            .executeIfDeadlineReached(context, repository, deadline = 150_000L, now = 100_000L)
+
+        assertEquals(SecurityState.COUNTDOWN_WIPE, repository.getSecurityState())
+        assertEquals(listOf(50_000L), scheduler.scheduleDelays)
     }
 }

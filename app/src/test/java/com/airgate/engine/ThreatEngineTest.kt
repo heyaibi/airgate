@@ -130,13 +130,20 @@ class ThreatEngineTest {
         val scheduleDelays = mutableListOf<Long>()
         var scheduleCalls = 0
         var cancelCalls = 0
+        var exactAlarmCapability = true
+        var scheduleResult = GraceWipeScheduler.WipeScheduleResult.EXACT_SCHEDULED
+        var scheduleDelayResult = GraceWipeScheduler.WipeScheduleResult.EXACT_SCHEDULED
 
-        override fun schedule(config: AppConfig) {
+        override fun canScheduleExactAlarms(): Boolean = exactAlarmCapability
+
+        override fun schedule(config: AppConfig): GraceWipeScheduler.WipeScheduleResult {
             scheduleCalls++
+            return scheduleResult
         }
 
-        override fun scheduleDelay(delayMs: Long) {
+        override fun scheduleDelay(delayMs: Long): GraceWipeScheduler.WipeScheduleResult {
             scheduleDelays.add(delayMs)
+            return scheduleDelayResult
         }
 
         override fun cancel() {
@@ -168,7 +175,14 @@ class ThreatEngineTest {
         val mockBinder = MockDhizukuBinder()
         dhizukuManager = DhizukuManager(context, mockBinder)
         notifier = RecordingAlarmNotifier(context)
-        threatEngine = ThreatEngine(context, repository, dhizukuManager, customWindowMs = 0L, alarmNotifier = notifier)
+        // The precise countdown is only ever armed while exact-alarm capability is
+        // present; the shared engine uses a recording scheduler that reports it so
+        // the countdown paths are exercised (the DummyContext has no AlarmManager).
+        threatEngine = ThreatEngine(
+            context, repository, dhizukuManager,
+            customWindowMs = 0L, alarmNotifier = notifier,
+            graceWipeScheduler = RecordingGraceWipeScheduler()
+        )
     }
 
     @Test
@@ -455,7 +469,11 @@ class ThreatEngineTest {
         repository.saveConfig(AppConfig(isEnabled = true, dryRunMode = true, graceWindowSeconds = 60))
         val mockBinder = MockDhizukuBinder()
         val manager = DhizukuManager(context, mockBinder)
-        val engine = ThreatEngine(context, repository, manager, customWindowMs = 0L, alarmNotifier = notifier)
+        val engine = ThreatEngine(
+            context, repository, manager,
+            customWindowMs = 0L, alarmNotifier = notifier,
+            graceWipeScheduler = RecordingGraceWipeScheduler()
+        )
 
         engine.executeWipeState()
 
@@ -1230,5 +1248,148 @@ class ThreatEngineTest {
 
         assertTrue(scheduler.scheduleDelays.isEmpty())
         assertEquals(SecurityState.COUNTDOWN_WIPE, repository.getSecurityState())
+    }
+
+    // --- Exact-alarm prerequisite: a precise countdown can never be armed without it ---
+
+    @Test
+    fun `executeWipeState with a grace window but no exact-alarm capability fails closed to the wipe`() {
+        repository.saveConfig(AppConfig(isEnabled = true, dryRunMode = true, graceWindowSeconds = 60))
+        val scheduler = RecordingGraceWipeScheduler().apply { exactAlarmCapability = false }
+        val engine = ThreatEngine(context, repository, dhizukuManager, customWindowMs = 0L, alarmNotifier = notifier, graceWipeScheduler = scheduler)
+
+        engine.executeWipeState()
+
+        // No countdown may be entered when its precise alarm cannot be armed: the
+        // escalation fails closed to the wipe instead of lying about a deadline.
+        assertEquals(SecurityState.WIPING, repository.getSecurityState())
+        assertEquals(0L, repository.getWipeDeadline())
+        assertEquals(0, scheduler.scheduleCalls)
+        assertEquals(0, notifier.countdownLaunches)
+        assertEquals(
+            "the audit alarm must record the exact-alarm-loss origin",
+            ThreatEngine.WIPE_EXECUTED_EXACT_LOST_CATEGORY,
+            repository.getPendingAlarm()?.category
+        )
+    }
+
+    @Test
+    fun `executeWipeState fails closed to the wipe when the exact schedule is rejected`() {
+        repository.saveConfig(AppConfig(isEnabled = true, dryRunMode = true, graceWindowSeconds = 60))
+        val scheduler = RecordingGraceWipeScheduler().apply {
+            scheduleResult = GraceWipeScheduler.WipeScheduleResult.SCHEDULING_FAILED
+        }
+        val engine = ThreatEngine(context, repository, dhizukuManager, customWindowMs = 0L, alarmNotifier = notifier, graceWipeScheduler = scheduler)
+
+        engine.executeWipeState()
+
+        assertEquals(SecurityState.WIPING, repository.getSecurityState())
+        assertEquals(0L, repository.getWipeDeadline())
+        assertEquals(1, scheduler.scheduleCalls)
+        assertEquals(0, notifier.countdownLaunches)
+        assertEquals(
+            "the audit alarm must record the exact-alarm-loss origin",
+            ThreatEngine.WIPE_EXECUTED_EXACT_LOST_CATEGORY,
+            repository.getPendingAlarm()?.category
+        )
+    }
+
+    @Test
+    fun `a fail-closed wipe that is refused records the exact-alarm-loss failure category`() {
+        repository.saveConfig(AppConfig(isEnabled = true, dryRunMode = false, graceWindowSeconds = 60))
+        val scheduler = RecordingGraceWipeScheduler().apply { exactAlarmCapability = false }
+        val refusedBinder = MockDhizukuBinder().apply { wipeAccepted = false }
+        val engine = ThreatEngine(context, repository, DhizukuManager(context, refusedBinder), customWindowMs = 0L, alarmNotifier = notifier, graceWipeScheduler = scheduler)
+
+        engine.executeWipeState()
+
+        assertEquals(SecurityState.ALARM_ACTIVE, repository.getSecurityState())
+        assertEquals(1, notifier.wipeFailures)
+        assertEquals(
+            "a refused fail-closed wipe must be distinguishable in the audit trail",
+            ThreatEngine.WIPE_FAILED_EXACT_LOST_CATEGORY,
+            repository.getPendingAlarm()?.category
+        )
+    }
+
+    @Test
+    fun `a normal accepted wipe records the ordinary wipe category not the exact-loss one`() {
+        // Contrast guard: only a fail-closed (exact-alarm-loss) wipe may use the
+        // distinct audit category; a normal escalation must keep the ordinary one.
+        repository.saveConfig(AppConfig(isEnabled = true, dryRunMode = false, graceWindowSeconds = 0))
+        val mockBinder = MockDhizukuBinder()
+        val engine = ThreatEngine(context, repository, DhizukuManager(context, mockBinder), customWindowMs = 0L, alarmNotifier = notifier)
+
+        engine.executeWipeState()
+
+        assertEquals(SecurityState.WIPING, repository.getSecurityState())
+        assertEquals(
+            ThreatEngine.WIPE_ALARM_CATEGORY,
+            repository.getPendingAlarm()?.category
+        )
+        assertTrue(
+            "a normal wipe must not be flagged as exact-alarm-loss",
+            repository.getPendingAlarm()?.category != ThreatEngine.WIPE_EXECUTED_EXACT_LOST_CATEGORY
+        )
+    }
+
+    @Test
+    fun `an INSTANT_WIPE breach with no exact-alarm capability still wipes immediately`() {
+        repository.saveConfig(AppConfig(isEnabled = true, dryRunMode = true, wipeThreshold = 1, graceWindowSeconds = 60))
+        val scheduler = RecordingGraceWipeScheduler().apply { exactAlarmCapability = false }
+        val engine = ThreatEngine(context, repository, dhizukuManager, customWindowMs = 0L, alarmNotifier = notifier, graceWipeScheduler = scheduler)
+
+        engine.processBreach(breach(ViolationType.AIRPLANE_MODE_OFF, ResponseTier.INSTANT_WIPE))
+
+        assertEquals(SecurityState.WIPING, repository.getSecurityState())
+        assertEquals(0, notifier.countdownLaunches)
+    }
+
+    // --- Exact-alarm loss mid-countdown: reconciliation fails closed to the wipe ---
+
+    @Test
+    fun `reconcilePendingWipe fails closed to the wipe when exact-alarm capability is lost`() {
+        repository.saveConfig(AppConfig(isEnabled = true, dryRunMode = true, graceWindowSeconds = 60))
+        repository.setSecurityState(SecurityState.COUNTDOWN_WIPE)
+        fakeElapsed = 10_000L
+        repository.setWipeDeadline(repository.getMonotonicNow() + 30_000L)
+        val scheduler = RecordingGraceWipeScheduler().apply { exactAlarmCapability = false }
+        val engine = ThreatEngine(context, repository, dhizukuManager, customWindowMs = 0L, alarmNotifier = notifier, graceWipeScheduler = scheduler)
+
+        engine.reconcilePendingWipe()
+
+        // The deadline could not be re-armed precisely (permission revoked while
+        // the app was down), so the countdown fails closed to an immediate wipe.
+        assertEquals(SecurityState.WIPING, repository.getSecurityState())
+        assertEquals(0L, repository.getWipeDeadline())
+        assertTrue(scheduler.scheduleDelays.isEmpty())
+        assertEquals(
+            "the reconciliation fail-closed wipe must record the exact-alarm-loss origin",
+            ThreatEngine.WIPE_EXECUTED_EXACT_LOST_CATEGORY,
+            repository.getPendingAlarm()?.category
+        )
+    }
+
+    @Test
+    fun `reconcilePendingWipe fails closed to the wipe when the re-arm cannot be scheduled exactly`() {
+        repository.saveConfig(AppConfig(isEnabled = true, dryRunMode = true, graceWindowSeconds = 60))
+        repository.setSecurityState(SecurityState.COUNTDOWN_WIPE)
+        fakeElapsed = 10_000L
+        repository.setWipeDeadline(repository.getMonotonicNow() + 30_000L)
+        val scheduler = RecordingGraceWipeScheduler().apply {
+            scheduleDelayResult = GraceWipeScheduler.WipeScheduleResult.SCHEDULING_FAILED
+        }
+        val engine = ThreatEngine(context, repository, dhizukuManager, customWindowMs = 0L, alarmNotifier = notifier, graceWipeScheduler = scheduler)
+
+        engine.reconcilePendingWipe()
+
+        assertEquals(SecurityState.WIPING, repository.getSecurityState())
+        assertEquals(0L, repository.getWipeDeadline())
+        assertEquals(listOf(30_000L), scheduler.scheduleDelays)
+        assertEquals(
+            "the failed re-arm must be recorded as exact-alarm-loss",
+            ThreatEngine.WIPE_EXECUTED_EXACT_LOST_CATEGORY,
+            repository.getPendingAlarm()?.category
+        )
     }
 }

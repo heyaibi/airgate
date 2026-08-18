@@ -101,13 +101,17 @@ open class GraceWipeReceiver(
         if (!config.isEnabled) return
         if (repository.getSecurityState() != SecurityState.COUNTDOWN_WIPE) return
         if (shouldSkipWipe(deadline, now)) {
-            rearmRemainingDelay(context, deadline, now)
+            if (!rearmRemainingDelay(context, deadline, now)) {
+                // The re-arm could not be made exact: the remaining countdown can no
+                // longer be guaranteed, so fail closed and wipe now rather than leave
+                // a deadline the platform may never fire. The audit alarm records the
+                // exact-alarm-loss origin so it is not mistaken for a normal wipe.
+                executeWipeNow(context, repository, exactAlarmLost = true)
+            }
             return
         }
 
-        val dhizukuManager = DhizukuManager(context.applicationContext)
-        val threatEngine = ThreatEngine(context.applicationContext, repository, dhizukuManager)
-        threatEngine.executeWipeState(graceElapsed = true)
+        executeWipeNow(context, repository)
     }
 
     /**
@@ -115,13 +119,27 @@ open class GraceWipeReceiver(
      * it for exactly the time remaining until the original deadline. A zero or
      * negative remaining delay means the deadline is actually due and needs no
      * re-arm.
+     *
+     * @return true when the remaining delay was armed exactly (or there was nothing
+     *   left to re-arm); false when the precise re-arm could not be scheduled and
+     *   the caller must fail closed.
      */
-    internal fun rearmRemainingDelay(context: Context, deadline: Long, now: Long) {
+    internal fun rearmRemainingDelay(context: Context, deadline: Long, now: Long): Boolean {
         val remaining = deadline - now
-        if (remaining > 0L) {
-            rearmLogger(remaining)
-            schedulerProvider(context.applicationContext).scheduleDelay(remaining)
-        }
+        if (remaining <= 0L) return true
+        rearmLogger(remaining)
+        return schedulerProvider(context.applicationContext).scheduleDelay(remaining) ==
+            GraceWipeScheduler.WipeScheduleResult.EXACT_SCHEDULED
+    }
+
+    private fun executeWipeNow(
+        context: Context,
+        repository: SecurityStateRepository,
+        exactAlarmLost: Boolean = false
+    ) {
+        val dhizukuManager = DhizukuManager(context.applicationContext)
+        val threatEngine = ThreatEngine(context.applicationContext, repository, dhizukuManager)
+        threatEngine.executeWipeState(graceElapsed = true, exactAlarmLost = exactAlarmLost)
     }
 
     /**

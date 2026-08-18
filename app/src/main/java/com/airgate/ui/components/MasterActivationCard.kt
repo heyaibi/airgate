@@ -51,6 +51,7 @@ fun MasterActivationCard(
     pinUsable: Boolean,
     notificationsGranted: Boolean,
     bluetoothConnectGranted: Boolean,
+    exactAlarmGranted: Boolean,
     onEnableBlocked: () -> Unit,
     onConfigChange: (AppConfig) -> Unit
 ) {
@@ -89,12 +90,13 @@ fun MasterActivationCard(
                 Switch(
                     checked = config.isEnabled,
                     onCheckedChange = { isChecked ->
-                        // Refuse to arm until an Armed PIN is configured and readable
-                        // AND the app can post notifications AND Bluetooth state can
-                        // be read — without these the owner could never disarm, could
-                        // never see the wipe countdown, or the monitor would be blind
-                        // to a live Bluetooth radio.
-                        if (isChecked && (!pinUsable || !notificationsGranted || !bluetoothConnectGranted)) {
+                        // Refuse to arm until an Armed PIN is configured and readable,
+                        // the app can post notifications, Bluetooth state can be read,
+                        // AND exact-alarm access is granted — without these the owner
+                        // could never disarm, could never see the wipe countdown, the
+                        // monitor would be blind to a live Bluetooth radio, or the
+                        // precise wipe deadline could never fire on time.
+                        if (isChecked && (!pinUsable || !notificationsGranted || !bluetoothConnectGranted || !exactAlarmGranted)) {
                             onEnableBlocked()
                             return@Switch
                         }

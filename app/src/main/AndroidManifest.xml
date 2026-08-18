@@ -97,6 +97,14 @@
             android:exported="false" />
 
         <receiver
+            android:name=".receiver.ScheduleExactAlarmReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
             android:name=".receiver.SafetyNetReceiver"
             android:exported="false" />
 

@@ -58,9 +58,11 @@ fun MasterControlsCard(
     pinUsable: Boolean,
     notificationsGranted: Boolean,
     bluetoothConnectGranted: Boolean,
+    exactAlarmGranted: Boolean,
     onEnableBlocked: () -> Unit,
     onNotificationsBlocked: () -> Unit,
-    onBluetoothBlocked: () -> Unit
+    onBluetoothBlocked: () -> Unit,
+    onExactAlarmBlocked: () -> Unit
 ) {
     // The ADB block toggle enforces ~20 Dhizuku binder transactions and verifies
     // the result before committing; that work must never run on the main thread,
@@ -92,6 +94,12 @@ fun MasterControlsCard(
                 // without it would be silently blind to a core air-gap signal.
                 if (enabled && !bluetoothConnectGranted) {
                     onBluetoothBlocked()
+                    return@SettingToggleRow
+                }
+                // Refuse to arm without exact-alarm access: a precise wipe countdown
+                // cannot be guaranteed otherwise, so the owner is sent to grant it.
+                if (enabled && !exactAlarmGranted) {
+                    onExactAlarmBlocked()
                     return@SettingToggleRow
                 }
                 onConfigChange(config.copy(isEnabled = enabled))
@@ -129,6 +137,12 @@ fun MasterControlsCard(
                 // The preset also inherits the Bluetooth-readability requirement.
                 if (on && !bluetoothConnectGranted) {
                     onBluetoothBlocked()
+                    return@SettingToggleRow
+                }
+                // The preset arms the watchdog, so it also inherits the
+                // exact-alarm requirement of the precise wipe countdown.
+                if (on && !exactAlarmGranted) {
+                    onExactAlarmBlocked()
                     return@SettingToggleRow
                 }
                 // The preset only enforces strict limits; the owner's own

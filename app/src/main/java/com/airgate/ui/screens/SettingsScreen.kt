@@ -17,6 +17,8 @@
 package com.airgate.ui.screens
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
@@ -103,6 +105,7 @@ fun SettingsScreen(
     var showPinRequiredDialog by remember { mutableStateOf(false) }
     var showNotificationsRequiredDialog by remember { mutableStateOf(false) }
     var showBluetoothRequiredDialog by remember { mutableStateOf(false) }
+    var showExactAlarmRequiredDialog by remember { mutableStateOf(false) }
     val pinUsable by remember { mutableStateOf(repository.isPinUsable()) }
     // Dhizuku availability is a bounded transaction (DhizukuManager's executor
     // timeout, default 3s, under the ANR threshold): a wedged Dhizuku server
@@ -114,6 +117,7 @@ fun SettingsScreen(
     }
     var notificationsGranted by remember { mutableStateOf(repository.areNotificationsAllowed()) }
     var bluetoothConnectGranted by remember { mutableStateOf(repository.isBluetoothConnectAllowed()) }
+    var exactAlarmGranted by remember { mutableStateOf(repository.canScheduleExactAlarms()) }
     var blockStatus by remember { mutableStateOf("") }
     var blockIsError by remember { mutableStateOf(false) }
     val settingsScope = rememberCoroutineScope()
@@ -309,6 +313,36 @@ fun SettingsScreen(
         )
     }
 
+    if (showExactAlarmRequiredDialog) {
+        AlertDialog(
+            onDismissRequest = { showExactAlarmRequiredDialog = false },
+            title = { Text("Exact Alarms Required", fontWeight = FontWeight.Bold) },
+            text = { Text("The precise wipe countdown depends on an exact alarm, so arming is refused until “Alarms & reminders” access is granted (Android 12+). You will be taken to the system setting to allow it, then you can arm the watchdog.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showExactAlarmRequiredDialog = false
+                        runCatching {
+                            context.startActivity(
+                                Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                                    data = Uri.parse("package:${context.packageName}")
+                                }
+                            )
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("Allow Exact Alarms")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExactAlarmRequiredDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     // Refresh statuses whenever this screen resumes (e.g. after returning
     // from the Dhizuku grant dialog or the system permission page).
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -321,6 +355,7 @@ fun SettingsScreen(
                 batteryExempt = powerManager.isIgnoringBatteryOptimizations(context.packageName)
                 notificationsGranted = repository.areNotificationsAllowed()
                 bluetoothConnectGranted = repository.isBluetoothConnectAllowed()
+                exactAlarmGranted = repository.canScheduleExactAlarms()
                 refreshBlockStatus()
             }
         }
@@ -359,7 +394,9 @@ fun SettingsScreen(
                 notificationsGranted = notificationsGranted,
                 onNotificationsGrantedChange = { notificationsGranted = it },
                 bluetoothConnectGranted = bluetoothConnectGranted,
-                onBluetoothConnectGrantedChange = { bluetoothConnectGranted = it }
+                onBluetoothConnectGrantedChange = { bluetoothConnectGranted = it },
+                exactAlarmGranted = exactAlarmGranted,
+                onExactAlarmGrantedChange = { exactAlarmGranted = it }
             )
 
             ElevatedCard(
@@ -395,9 +432,11 @@ fun SettingsScreen(
                 pinUsable = pinUsable,
                 notificationsGranted = notificationsGranted,
                 bluetoothConnectGranted = bluetoothConnectGranted,
+                exactAlarmGranted = exactAlarmGranted,
                 onEnableBlocked = { showPinRequiredDialog = true },
                 onNotificationsBlocked = { showNotificationsRequiredDialog = true },
-                onBluetoothBlocked = { showBluetoothRequiredDialog = true }
+                onBluetoothBlocked = { showBluetoothRequiredDialog = true },
+                onExactAlarmBlocked = { showExactAlarmRequiredDialog = true }
             )
 
             PostureTamperAlarmsCard(

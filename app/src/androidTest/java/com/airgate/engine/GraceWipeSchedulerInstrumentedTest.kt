@@ -29,6 +29,7 @@ import com.airgate.dhizuku.DhizukuManager
 import com.airgate.domain.model.AppConfig
 import com.airgate.domain.model.SecurityState
 import com.airgate.receiver.GraceWipeReceiver
+import com.airgate.testutil.ExactAlarmTestAccess
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -65,11 +66,18 @@ class GraceWipeSchedulerInstrumentedTest {
     ) {
         val scheduleDelays = mutableListOf<Long>()
         var scheduleCalls = 0
-        override fun schedule(config: AppConfig) {
+        var exactAlarmCapability = true
+
+        override fun canScheduleExactAlarms(): Boolean = exactAlarmCapability
+
+        override fun schedule(config: AppConfig): GraceWipeScheduler.WipeScheduleResult {
             scheduleCalls++
+            return GraceWipeScheduler.WipeScheduleResult.EXACT_SCHEDULED
         }
-        override fun scheduleDelay(delayMs: Long) {
+
+        override fun scheduleDelay(delayMs: Long): GraceWipeScheduler.WipeScheduleResult {
             scheduleDelays.add(delayMs)
+            return GraceWipeScheduler.WipeScheduleResult.EXACT_SCHEDULED
         }
     }
 
@@ -90,6 +98,7 @@ class GraceWipeSchedulerInstrumentedTest {
         prefs: android.content.SharedPreferences,
         graceSeconds: Int
     ): Pair<SecurityStateRepository, AppConfig> {
+        ExactAlarmTestAccess.grant(context)
         val repository = SecurityStateRepository(prefs, null, notificationsAllowedProvider = { true })
         repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         val config = repository.saveConfig(
@@ -271,11 +280,22 @@ class GraceWipeSchedulerInstrumentedTest {
             val remaining = rebooted.getWipeRemainingMs()
             assertTrue("the remaining grace must survive the reboot, was $remaining", remaining in 1..2_000)
 
-            val engine = ThreatEngine(context, rebooted, DhizukuManager(context))
+            // A recording scheduler reports exact-alarm capability so the reconcile
+            // deterministically re-arms regardless of the device's appop state.
+            val recording = RecordingGraceWipeScheduler()
+            val engine = ThreatEngine(
+                context, rebooted, DhizukuManager(context),
+                graceWipeScheduler = recording
+            )
             engine.reconcilePendingWipe()
 
             // The wipe is re-armed for the remaining grace, not executed early.
             assertTrue(rebooted.getSecurityState() == SecurityState.COUNTDOWN_WIPE)
+            assertEquals(1, recording.scheduleDelays.size)
+            assertTrue(
+                "the re-arm must cover the remaining window, was ${recording.scheduleDelays[0]}",
+                recording.scheduleDelays[0] in 1..2_000
+            )
 
             // Execute the wipe directly via the receiver's synchronous guard —
             // deterministic, no broadcast delivery race on CI.
@@ -323,6 +343,7 @@ class GraceWipeSchedulerInstrumentedTest {
         // the persisted deadline (unchanged).
         val prefs = realPrefs()
         try {
+            ExactAlarmTestAccess.grant(context)
             val repository = SecurityStateRepository(prefs, null, notificationsAllowedProvider = { true })
             repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
             repository.saveConfig(
@@ -369,6 +390,7 @@ class GraceWipeSchedulerInstrumentedTest {
         )
         val scheduler = RecordingGraceWipeScheduler()
         try {
+            ExactAlarmTestAccess.grant(context)
             val repository = SecurityStateRepository(prefs, null, notificationsAllowedProvider = { true })
             repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
             repository.saveConfig(

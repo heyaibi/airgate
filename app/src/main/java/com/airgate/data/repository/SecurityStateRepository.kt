@@ -17,6 +17,7 @@
 package com.airgate.data.repository
 
 import android.Manifest
+import android.app.AlarmManager
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
@@ -44,13 +45,15 @@ class SecurityStateRepository(
     crypto: PrefsCrypto? = null,
     private val notificationsAllowedProvider: () -> Boolean = { true },
     private val bluetoothConnectAllowedProvider: () -> Boolean = { true },
+    private val exactAlarmAllowedProvider: () -> Boolean = { true },
     elapsedRealtimeProvider: () -> Long = { android.os.SystemClock.elapsedRealtime() }
 ) {
     constructor(context: Context) : this(
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
         null,
         { canPostAlarmNotifications(context) },
-        { hasBluetoothConnectPermission(context) }
+        { hasBluetoothConnectPermission(context) },
+        { canScheduleExactAlarms(context) }
     )
 
     companion object {
@@ -81,6 +84,20 @@ class SecurityStateRepository(
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
             return context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) ==
                 PackageManager.PERMISSION_GRANTED
+        }
+
+        /**
+         * True when the app can schedule exact alarms on this device. On Android
+         * 12+ (S) this requires the SCHEDULE_EXACT_ALARM special access (the
+         * "Alarms & reminders" toggle in Settings), which is denied by default on
+         * fresh Android 13+ installs; below S exact alarms are always available.
+         * A missing AlarmManager is treated as unavailable so callers fail closed.
+         */
+        fun canScheduleExactAlarms(context: Context): Boolean {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+                ?: return false
+            return alarmManager.canScheduleExactAlarms()
         }
     }
 
@@ -233,6 +250,15 @@ class SecurityStateRepository(
     fun isBluetoothConnectAllowed(): Boolean = bluetoothConnectAllowedProvider()
 
     /**
+     * True when the app currently holds the SCHEDULE_EXACT_ALARM special access
+     * (the "Alarms & reminders" toggle) on the platform versions that require it.
+     * The precise grace-wipe countdown depends on an exact alarm, so arming
+     * without it is refused, and a countdown that loses it mid-flight fails
+     * closed to an immediate wipe rather than running unguaranteed.
+     */
+    fun canScheduleExactAlarms(): Boolean = exactAlarmAllowedProvider()
+
+    /**
      * Persists config.
      *
      * The watchdog can never be enabled while the Armed PIN is missing or its
@@ -252,6 +278,12 @@ class SecurityStateRepository(
      * the Bluetooth state to be readable (BLUETOOTH_CONNECT on Android 12+), so no
      * arming path can arm a device that is blind to Bluetooth activity.
      *
+     * The same transition-only rule applies to exact alarms: arming requires the
+     * SCHEDULE_EXACT_ALARM special access ("Alarms & reminders" on Android 12+),
+     * so no arming path can arm a precise wipe countdown that the platform could
+     * not fire on time. An already-armed device stays armed if the access is
+     * later revoked; the countdown reconciliation fails closed when that happens.
+     *
      * Disabling is always allowed. Returns the effective config (which may differ
      * from the requested one).
      */
@@ -261,6 +293,7 @@ class SecurityStateRepository(
             config.isEnabled && !isPinUsable() -> config.copy(isEnabled = false)
             enablingNow && !notificationsAllowedProvider() -> config.copy(isEnabled = false)
             enablingNow && !bluetoothConnectAllowedProvider() -> config.copy(isEnabled = false)
+            enablingNow && !exactAlarmAllowedProvider() -> config.copy(isEnabled = false)
             else -> config
         }
         configStore.saveConfig(effective)

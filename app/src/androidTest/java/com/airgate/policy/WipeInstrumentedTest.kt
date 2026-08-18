@@ -26,6 +26,7 @@ import com.airgate.domain.model.SecurityState
 import com.airgate.domain.model.WipeResult
 import com.airgate.data.crypto.PinManager
 import com.airgate.engine.ThreatEngine
+import com.airgate.testutil.ExactAlarmTestAccess
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
@@ -50,6 +51,7 @@ class WipeInstrumentedTest {
         get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     private fun throwawayRepository(): SecurityStateRepository {
+        ExactAlarmTestAccess.grant(context)
         val prefs = context.getSharedPreferences(
             "wipe_instrumented_${System.currentTimeMillis()}",
             Context.MODE_PRIVATE

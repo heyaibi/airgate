@@ -25,6 +25,7 @@ import com.airgate.data.crypto.PinManager
 import com.airgate.data.repository.SecurityStateRepository
 import com.airgate.domain.model.AppConfig
 import com.airgate.receiver.SafetyNetReceiver
+import com.airgate.testutil.ExactAlarmTestAccess
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -191,6 +192,7 @@ class SafetyNetSchedulerInstrumentedTest {
     }
 
     private fun armWatchdog() {
+        ExactAlarmTestAccess.grant(context)
         val repo = SecurityStateRepository(prefs)
         repo.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
         repo.saveConfig(AppConfig(isEnabled = true, safetyNetIntervalMinutes = 5))

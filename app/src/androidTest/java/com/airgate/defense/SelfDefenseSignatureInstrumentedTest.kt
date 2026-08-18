@@ -27,6 +27,7 @@ import com.airgate.domain.model.AppConfig
 import com.airgate.domain.model.SecurityState
 import com.airgate.engine.ThreatEngine
 import com.airgate.service.PostureAudit
+import com.airgate.testutil.ExactAlarmTestAccess
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -59,6 +60,7 @@ class SelfDefenseSignatureInstrumentedTest {
         get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     private fun throwawayRepository(): SecurityStateRepository {
+        ExactAlarmTestAccess.grant(context)
         val prefs = context.getSharedPreferences(
             "self_defense_instrumented_${System.currentTimeMillis()}",
             Context.MODE_PRIVATE

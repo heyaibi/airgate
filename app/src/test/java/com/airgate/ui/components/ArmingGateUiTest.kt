@@ -62,6 +62,7 @@ class ArmingGateUiTest {
                 pinUsable = true,
                 notificationsGranted = false,
                 bluetoothConnectGranted = true,
+                exactAlarmGranted = true,
                 onEnableBlocked = { enableBlocked = true },
                 onConfigChange = { configChanged = true }
             )
@@ -86,6 +87,7 @@ class ArmingGateUiTest {
                 pinUsable = true,
                 notificationsGranted = true,
                 bluetoothConnectGranted = false,
+                exactAlarmGranted = true,
                 onEnableBlocked = { enableBlocked = true },
                 onConfigChange = { configChanged = true }
             )
@@ -110,6 +112,7 @@ class ArmingGateUiTest {
                 pinUsable = false,
                 notificationsGranted = true,
                 bluetoothConnectGranted = true,
+                exactAlarmGranted = true,
                 onEnableBlocked = { enableBlocked = true },
                 onConfigChange = { configChanged = true }
             )
@@ -134,6 +137,7 @@ class ArmingGateUiTest {
                 pinUsable = true,
                 notificationsGranted = true,
                 bluetoothConnectGranted = true,
+                exactAlarmGranted = true,
                 onEnableBlocked = { enableBlocked = true },
                 onConfigChange = { configChanged = it }
             )
@@ -146,13 +150,40 @@ class ArmingGateUiTest {
         assertFalse(enableBlocked)
     }
 
+    @Test
+    fun dashboardSwitch_refusesToArm_whenExactAlarmIsNotGranted() {
+        var configChanged = false
+        var enableBlocked = false
+
+        composeRule.setContent {
+            MasterActivationCard(
+                config = AppConfig(),
+                context = context,
+                pinUsable = true,
+                notificationsGranted = true,
+                bluetoothConnectGranted = true,
+                exactAlarmGranted = false,
+                onEnableBlocked = { enableBlocked = true },
+                onConfigChange = { configChanged = true }
+            )
+        }
+
+        composeRule.onNodeWithTag("master_activation_switch").performClick()
+        composeRule.waitForIdle()
+
+        assertTrue("arming must be refused without exact-alarm access", enableBlocked)
+        assertFalse("no config change may be committed when arming is refused", configChanged)
+    }
+
     private fun masterControlsCard(
         pinUsable: Boolean,
         notificationsGranted: Boolean,
         bluetoothConnectGranted: Boolean,
+        exactAlarmGranted: Boolean = true,
         onConfigChange: (AppConfig) -> Unit,
         onNotificationsBlocked: () -> Unit = {},
-        onBluetoothBlocked: () -> Unit = {}
+        onBluetoothBlocked: () -> Unit = {},
+        onExactAlarmBlocked: () -> Unit = {}
     ) {
         composeRule.setContent {
             MasterControlsCard(
@@ -168,9 +199,11 @@ class ArmingGateUiTest {
                 pinUsable = pinUsable,
                 notificationsGranted = notificationsGranted,
                 bluetoothConnectGranted = bluetoothConnectGranted,
+                exactAlarmGranted = exactAlarmGranted,
                 onEnableBlocked = {},
                 onNotificationsBlocked = onNotificationsBlocked,
-                onBluetoothBlocked = onBluetoothBlocked
+                onBluetoothBlocked = onBluetoothBlocked,
+                onExactAlarmBlocked = onExactAlarmBlocked
             )
         }
     }
@@ -273,5 +306,47 @@ class ArmingGateUiTest {
 
         assertTrue("arming must proceed when all preconditions hold", configChanged?.isEnabled == true)
         assertFalse(notificationsBlocked)
+    }
+
+    @Test
+    fun settingsEnableWatchdog_refusesToArm_whenExactAlarmIsNotGranted() {
+        var configChanged = false
+        var exactAlarmBlocked = false
+
+        masterControlsCard(
+            pinUsable = true,
+            notificationsGranted = true,
+            bluetoothConnectGranted = true,
+            exactAlarmGranted = false,
+            onConfigChange = { configChanged = true },
+            onExactAlarmBlocked = { exactAlarmBlocked = true }
+        )
+
+        composeRule.onNodeWithTag("enable_watchdog_switch").performClick()
+        composeRule.waitForIdle()
+
+        assertTrue("arming must be refused without exact-alarm access", exactAlarmBlocked)
+        assertFalse("no config change may be committed when arming is refused", configChanged)
+    }
+
+    @Test
+    fun settingsParanoidPreset_refusesToArm_whenExactAlarmIsNotGranted() {
+        var configChanged = false
+        var exactAlarmBlocked = false
+
+        masterControlsCard(
+            pinUsable = true,
+            notificationsGranted = true,
+            bluetoothConnectGranted = true,
+            exactAlarmGranted = false,
+            onConfigChange = { configChanged = true },
+            onExactAlarmBlocked = { exactAlarmBlocked = true }
+        )
+
+        composeRule.onNodeWithTag("paranoid_mode_switch").performClick()
+        composeRule.waitForIdle()
+
+        assertTrue("the preset must be refused without exact-alarm access", exactAlarmBlocked)
+        assertFalse("no config change may be committed when the preset is refused", configChanged)
     }
 }

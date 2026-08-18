@@ -14,7 +14,7 @@
 
 - **Weighted tiered accounting** — each scoring group can claim at most one threat point per 24-hour window, so a single flapping radio cannot farm points. The persistent threat streak is measured against a configurable wipe threshold (default **3**).
 - **Four response tiers** — `LOG_ONLY` (audit), `ALARM` (harden + full-screen alarm), `ALARM_STREAK` (harden + point + alarm), and `INSTANT_WIPE` (bypass the streak and wipe immediately). Self-defense failures route through the `INSTANT_WIPE` tier by default.
-- **Grace countdown** — an optional grace window delays the wipe behind a countdown screen instead of wiping instantly. The countdown deadline runs on a reboot-surviving monotonic clock, so changing the system clock cannot stretch or skip it.
+- **Grace countdown** — an optional grace window delays the wipe behind a countdown screen instead of wiping instantly. The countdown deadline runs on a reboot-surviving monotonic clock, so changing the system clock cannot stretch or skip it, and it is armed as an exact alarm: if the "Alarms & reminders" access needed to fire that alarm is ever unavailable, the app fails closed to an immediate wipe rather than presenting a deadline it cannot guarantee, recording the escalation distinctly in the audit alarm ("WIPE EXECUTED / FAILED — EXACT ALARM LOST").
 - **Wipe scope** — the wipe is a full factory reset, optionally including FRP (Factory Reset Protection) data. The platform's wipe APIs are fire-and-forget, so the engine tracks the honest result — `ACCEPTED` (the system took over the erase), `SIMULATED` (dry-run), or `REJECTED` — and a refused wipe returns to the alarm state and raises a "WIPE FAILED" alarm instead of silently claiming success.
 - **Dry-Run mode (default ON)** — every destructive action is simulated until you deliberately go live, and turning it off requires a confirmation dialog that spells out the consequence.
 
@@ -27,7 +27,7 @@
 ### App experience
 
 - **Armed PIN lock** — PBKDF2-HMAC-SHA256 with 120,000 rounds and a per-install salt, 5-attempt lockout with exponential backoff; the same PIN guards alarm disarm, streak clearing, and settings. PIN material and settings are encrypted at rest in the Android Keystore, and lockout runs on a monotonic clock — a manual clock change cannot bypass it.
-- **Arming gate** — the watchdog can only be switched on while the Armed PIN is configured and readable, the app can post notifications, and Bluetooth state can be read (BLUETOOTH_CONNECT), so a device whose alarm path could be entirely silent or whose Bluetooth detection is blind can never be armed. Disabling is always allowed.
+- **Arming gate** — the watchdog can only be switched on while the Armed PIN is configured and readable, the app can post notifications, Bluetooth state can be read (BLUETOOTH_CONNECT), and exact-alarm access ("Alarms & reminders") is granted, so a device whose alarm path could be entirely silent, whose Bluetooth detection is blind, or whose precise wipe deadline could never fire on time can never be armed. Disabling is always allowed.
 - **Dashboard** — live threat-score hero meter, Protection master switch, and fail-closed Shield Status of each defense layer; Android-redacted or unavailable facts are shown as Unknown rather than secured.
 - **Security Activity** — current threat score and each active violation category with occurrence counts and reasons.
 - **Violations guide** — a searchable, filterable catalogue of every detection, plus a Protection Vectors overview of the shield architecture.
@@ -51,8 +51,8 @@ Regenerate them with `make screens`, `make screens-dark`, and `make mockups` (th
 - **Weighted Tiered Accounting:** Monitors 12 multi-vector signals (Wi-Fi transceiver, validated network, airplane mode, Bluetooth, USB tethering / host-link / data function, OTG ethernet, system clock skew, SIM state, device-protection loss, monitor registration health) and maintains persistent threat streaks against configurable wipe thresholds. ADB and developer-options protection is verified through device-policy restrictions rather than redacted settings.
 - **Self-Defense Audit:** Periodically checks DO status and package signature integrity.
 - **Dry-Run Harness:** Offline simulation mode for safe dry-run testing of threat triggers without destructive system resets.
-- **Notification-Gated Arming:** The watchdog can only be *newly* enabled while the Armed PIN is usable, the app can post notifications, and Bluetooth state can be read, so a device whose alarm path could be entirely silent or whose Bluetooth detection is blind is never armed.
-- **Monotonic Deadlines:** Grace-wipe countdowns and PIN lockout run on a reboot-surviving monotonic clock, immune to manual wall-clock changes.
+- **Notification-Gated Arming:** The watchdog can only be *newly* enabled while the Armed PIN is usable, the app can post notifications, Bluetooth state can be read, and exact-alarm access is granted, so a device whose alarm path could be entirely silent, whose Bluetooth detection is blind, or whose precise wipe deadline could never fire on time is never armed.
+- **Monotonic Deadlines:** Grace-wipe countdowns and PIN lockout run on a reboot-surviving monotonic clock, immune to manual wall-clock changes. The wipe countdown is armed as an exact alarm; a countdown that can no longer be armed exactly fails closed to an immediate wipe.
 
 ## Violation matrix
 
@@ -90,7 +90,7 @@ Every monitored condition, its trigger, response tier, whether it shows the full
 ### How scoring works
 
 - **Threat points** — when a violation fires, its scoring group may claim **one point per 24-hour window**; repeated breaches of the same group within the window do not stack. The threat streak is the running sum of claimed points.
-- **Wipe threshold** — the streak is measured against the configured wipe threshold (default **3**). At `streak ≥ threshold` the wipe path starts: an instant wipe, or a grace-window countdown if one is configured.
+- **Wipe threshold** — the streak is measured against the configured wipe threshold (default **3**). At `streak ≥ threshold` the wipe path starts: an instant wipe, or a grace-window countdown if one is configured and can be armed as an exact alarm (otherwise it fails closed to an immediate wipe).
 - **Response tiers** — `LOG_ONLY` records the event with no alarm or point; `ALARM` runs reactive hardening plus a full-screen alarm without scoring; `ALARM_STREAK` adds hardening + alarm + point; `INSTANT_WIPE` bypasses the streak entirely.
 - **Streak reset** — the threat streak is reset only by deliberate owner or developer actions: the PIN-gated Clear Threat Streak button on the dashboard, the reset after a simulated wipe, or the dry-run simulation harness. There is no automatic reset.
 - **Self-defense** — device-protection and signature-tamper failures default to `INSTANT_WIPE` through `selfTamperTier`, independent of the streak.

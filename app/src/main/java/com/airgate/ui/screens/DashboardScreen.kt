@@ -93,6 +93,7 @@ fun DashboardScreen(
     val pinUsable by remember { mutableStateOf(repository.isPinUsable()) }
     var notificationsGranted by remember { mutableStateOf(repository.areNotificationsAllowed()) }
     var bluetoothConnectGranted by remember { mutableStateOf(repository.isBluetoothConnectAllowed()) }
+    var exactAlarmGranted by remember { mutableStateOf(repository.canScheduleExactAlarms()) }
 
     // Persistent in-app alarm: raised whenever the engine escalates, it survives
     // even when the real-time surfaces were silent (notifications denied / activity
@@ -128,6 +129,7 @@ fun DashboardScreen(
                 securityState = repository.getSecurityState()
                 notificationsGranted = repository.areNotificationsAllowed()
                 bluetoothConnectGranted = repository.isBluetoothConnectAllowed()
+                exactAlarmGranted = repository.canScheduleExactAlarms()
                 pendingAlarm = repository.getPendingAlarm()
                 shieldScope.launch {
                     shieldStatuses = withContext(Dispatchers.Default) { shieldChecker.check() }
@@ -203,10 +205,11 @@ fun DashboardScreen(
                 pinUsable = pinUsable,
                 notificationsGranted = notificationsGranted,
                 bluetoothConnectGranted = bluetoothConnectGranted,
+                exactAlarmGranted = exactAlarmGranted,
                 onEnableBlocked = {
                     coroutineScope.launch {
                         snackbarHostState.showSnackbar(
-                            message = "Protection requires a usable Armed PIN, notifications, and Bluetooth detection enabled.",
+                            message = "Protection requires a usable Armed PIN, notifications, Bluetooth detection, and exact-alarm access enabled.",
                             duration = SnackbarDuration.Short
                         )
                     }

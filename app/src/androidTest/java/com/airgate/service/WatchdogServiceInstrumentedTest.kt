@@ -27,6 +27,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.airgate.data.crypto.PinManager
 import com.airgate.data.repository.SecurityStateRepository
 import com.airgate.domain.model.AppConfig
+import com.airgate.testutil.ExactAlarmTestAccess
 import com.airgate.domain.model.ViolationType
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -125,13 +126,16 @@ class WatchdogServiceInstrumentedTest {
 
     private fun provisionPermissions() {
         // POST_NOTIFICATIONS + BLUETOOTH_CONNECT are required by the arming gate;
-        // WRITE_SECURE_SETTINGS makes the airplane toggle deterministic. All three
-        // are best-effort (a device that refuses a grant is handled gracefully).
+        // SCHEDULE_EXACT_ALARM is required because arming needs the precise wipe
+        // countdown to be schedulable; WRITE_SECURE_SETTINGS makes the airplane
+        // toggle deterministic. All are best-effort (a device that refuses a grant
+        // is handled gracefully).
         grant("android.permission.POST_NOTIFICATIONS")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             grant("android.permission.BLUETOOTH_CONNECT")
         }
         grant("android.permission.WRITE_SECURE_SETTINGS")
+        ExactAlarmTestAccess.grant(context)
         Thread.sleep(500)
     }
 

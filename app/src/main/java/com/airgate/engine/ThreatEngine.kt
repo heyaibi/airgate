@@ -222,6 +222,10 @@ class ThreatEngine(
      * wipe deadline is persisted on the monotonic clock when the countdown is
      * scheduled, so a reboot (which clears AlarmManager alarms) does not lose
      * the wipe:
+     *  - if exact-alarm capability has been lost while the app was down (the
+     *    SCHEDULE_EXACT_ALARM access was revoked and the process was killed), the
+     *    wipe executes immediately — a countdown whose precise alarm can no longer
+     *    be armed is a guarantee the app can no longer keep, so it fails closed,
      *  - if the deadline has not yet elapsed, the alarm is re-armed for the
      *    remaining time only (the absolute deadline never moves), and
      *  - if the deadline elapsed while the app was down, the wipe executes.
@@ -236,19 +240,34 @@ class ThreatEngine(
             if (repository.getSecurityState() != SecurityState.COUNTDOWN_WIPE) return
             val deadline = repository.getWipeDeadline()
             if (deadline <= 0L) return
+            if (!graceWipeScheduler.canScheduleExactAlarms()) {
+                executeWipeState(graceElapsed = true, exactAlarmLost = true)
+                return
+            }
             val remaining = repository.getWipeRemainingMs()
             if (remaining > 0L) {
-                graceWipeScheduler.scheduleDelay(remaining)
+                if (graceWipeScheduler.scheduleDelay(remaining) != GraceWipeScheduler.WipeScheduleResult.EXACT_SCHEDULED) {
+                    executeWipeState(graceElapsed = true, exactAlarmLost = true)
+                }
             } else {
                 executeWipeState(graceElapsed = true)
             }
         }
     }
 
-    fun executeWipeState(graceElapsed: Boolean = false) {
+    /**
+     * Executes the wipe. When [exactAlarmLost] is true the wipe is a fail-closed
+     * escalation: the precise grace countdown could no longer be guaranteed (the
+     * SCHEDULE_EXACT_ALARM access was lost or the exact alarm could not be armed),
+     * so the wipe fires immediately instead of presenting a deadline the platform
+     * might never honor. That origin is recorded in the audit alarm so a fail-closed
+     * wipe is never mistaken for a normal escalation.
+     */
+    fun executeWipeState(graceElapsed: Boolean = false, exactAlarmLost: Boolean = false) {
         synchronized(wipeTransitionLock) {
             val config = repository.getConfig()
-            if (!graceElapsed && config.graceWindowSeconds > 0) {
+            val countdownWanted = !graceElapsed && config.graceWindowSeconds > 0
+            if (countdownWanted && graceWipeScheduler.canScheduleExactAlarms()) {
                 // The wipe countdown is latched: once it is running, a further breach
                 // must not re-arm it. The absolute wipe deadline stands, so repeated
                 // breaches cannot postpone the wipe indefinitely. Only the deadline
@@ -258,7 +277,13 @@ class ThreatEngine(
                 repository.setWipeDeadline(
                     repository.getMonotonicNow() + config.graceWindowSeconds * 1000L
                 )
-                graceWipeScheduler.schedule(config)
+                if (graceWipeScheduler.schedule(config) != GraceWipeScheduler.WipeScheduleResult.EXACT_SCHEDULED) {
+                    // The precise alarm could not be armed after all: a countdown
+                    // the platform may never fire on time is a lie. Fail closed to
+                    // the wipe instead of running an unguaranteed deadline.
+                    executeWipeState(graceElapsed = true, exactAlarmLost = true)
+                    return
+                }
                 raisePendingAlarm(
                     category = COUNTDOWN_ALARM_CATEGORY,
                     description = "A wipe is scheduled. Disarm with your Armed PIN to cancel it.",
@@ -266,24 +291,45 @@ class ThreatEngine(
                 )
                 alarmNotifier.launchCountdown()
             } else {
+                // A precise countdown is not wanted (no grace window, or this is the
+                // grace-expired path) or cannot be armed (exact-alarm capability
+                // missing): execute the wipe. When a countdown was wanted but the
+                // exact alarm could not be armed, the wipe is a fail-closed escalation
+                // and is recorded as such in the audit alarm.
+                val lostExactAlarm = exactAlarmLost ||
+                    (countdownWanted && !graceWipeScheduler.canScheduleExactAlarms())
                 if (graceElapsed && repository.getSecurityState() != SecurityState.COUNTDOWN_WIPE) return
                 when (wipeController.executeWipe(config)) {
                     WipeResult.ACCEPTED, WipeResult.SIMULATED -> {
                         repository.setSecurityState(SecurityState.WIPING)
-                        raisePendingAlarm(
-                            category = WIPE_ALARM_CATEGORY,
-                            description = "The device wipe executed. Production protocol would erase all data."
-                        )
+                        if (lostExactAlarm) {
+                            raisePendingAlarm(
+                                category = WIPE_EXECUTED_EXACT_LOST_CATEGORY,
+                                description = "The wipe executed early because the precise countdown could no longer be guaranteed (exact-alarm access lost)."
+                            )
+                        } else {
+                            raisePendingAlarm(
+                                category = WIPE_ALARM_CATEGORY,
+                                description = "The device wipe executed. Production protocol would erase all data."
+                            )
+                        }
                     }
                     WipeResult.REJECTED -> {
                         // The platform refused the wipe: the device's data is still present,
                         // so it must never be shown as wiped. Return to the alarm state and
                         // surface the failure loudly instead of silently claiming success.
                         repository.setSecurityState(SecurityState.ALARM_ACTIVE)
-                        raisePendingAlarm(
-                            category = WIPE_FAILED_ALARM_CATEGORY,
-                            description = "The wipe was rejected by the system; device data has not been erased."
-                        )
+                        if (lostExactAlarm) {
+                            raisePendingAlarm(
+                                category = WIPE_FAILED_EXACT_LOST_CATEGORY,
+                                description = "The wipe was rejected by the system; device data has not been erased. The precise countdown could no longer be guaranteed (exact-alarm access lost)."
+                            )
+                        } else {
+                            raisePendingAlarm(
+                                category = WIPE_FAILED_ALARM_CATEGORY,
+                                description = "The wipe was rejected by the system; device data has not been erased."
+                            )
+                        }
                         alarmNotifier.launchWipeFailure()
                     }
                 }
@@ -315,5 +361,7 @@ class ThreatEngine(
         const val COUNTDOWN_ALARM_CATEGORY = "WIPE COUNTDOWN"
         const val WIPE_ALARM_CATEGORY = "WIPE EXECUTED"
         const val WIPE_FAILED_ALARM_CATEGORY = "WIPE FAILED"
+        const val WIPE_EXECUTED_EXACT_LOST_CATEGORY = "WIPE EXECUTED — EXACT ALARM LOST"
+        const val WIPE_FAILED_EXACT_LOST_CATEGORY = "WIPE FAILED — EXACT ALARM LOST"
     }
 }
