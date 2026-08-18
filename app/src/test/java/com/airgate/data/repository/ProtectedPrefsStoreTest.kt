@@ -76,6 +76,7 @@ class ProtectedPrefsStoreTest {
 
     @Before
     fun setUp() {
+        ProtectedPrefsStore.consumeProcessTamperFlag()
         store = ProtectedPrefsStore(prefs, crypto)
     }
 
@@ -233,6 +234,50 @@ class ProtectedPrefsStoreTest {
 
         assertTrue("first consume must observe the tamper", store.consumeTamperFlag())
         assertFalse("the flag is cleared by consumption", store.consumeTamperFlag())
+    }
+
+    @Test
+    fun tamperObservedByOneStoreInstance_isConsumedByAnotherStoreInstance() {
+        val store1 = ProtectedPrefsStore(prefs, crypto)
+        val store2 = ProtectedPrefsStore(MockSharedPreferences(), JvmPrefsCrypto("other"))
+
+        prefs.edit().putString("k", "enc:broken").commit()
+        store1.protectedGetString("k", "DEFAULT")
+
+        assertTrue("store2 must observe tamper triggered on store1", store2.consumeTamperFlag())
+        assertFalse("flag must be cleared for subsequent reads on store1", store1.consumeTamperFlag())
+        assertFalse("flag must be cleared for subsequent reads on store2", store2.consumeTamperFlag())
+    }
+
+    @Test
+    fun markTampered_isObservedByAllStoreInstances() {
+        val store1 = ProtectedPrefsStore(prefs, crypto)
+        val store2 = ProtectedPrefsStore(prefs, crypto)
+
+        ProtectedPrefsStore.markTampered()
+
+        assertTrue(store1.consumeTamperFlag())
+        assertFalse(store2.consumeTamperFlag())
+    }
+
+    @Test
+    fun concurrentTamperTriggers_consumeAtomicallyWithoutLostAlerts() {
+        val threadCount = 10
+        val latch = java.util.concurrent.CountDownLatch(threadCount)
+        val executor = java.util.concurrent.Executors.newFixedThreadPool(threadCount)
+
+        for (i in 0 until threadCount) {
+            executor.submit {
+                val localStore = ProtectedPrefsStore(MockSharedPreferences(), crypto)
+                ProtectedPrefsStore.markTampered()
+                latch.countDown()
+            }
+        }
+        latch.await(5, java.util.concurrent.TimeUnit.SECONDS)
+        executor.shutdown()
+
+        assertTrue("at least one consumer observes the latched tamper", store.consumeTamperFlag())
+        assertFalse("subsequent consumer sees cleared state", store.consumeTamperFlag())
     }
 
     @Test

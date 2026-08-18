@@ -21,6 +21,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.airgate.domain.model.SecurityState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -120,5 +121,34 @@ class SecurityStateFlowInstrumentedTest {
             repo.securityStateFlow.value
         )
         assertTrue(repo.consumeStateTamperFlag())
+    }
+
+    @Test
+    fun crossInstanceTamperDetection_sharedAcrossRepositories_onDevice() {
+        val prefs1 = context.getSharedPreferences(
+            "security_state_cross_1_${System.currentTimeMillis()}",
+            Context.MODE_PRIVATE
+        )
+        val prefs2 = context.getSharedPreferences(
+            "security_state_cross_2_${System.currentTimeMillis()}",
+            Context.MODE_PRIVATE
+        )
+        prefs1.edit().clear().commit()
+        prefs2.edit().clear().commit()
+
+        val repo1 = SecurityStateRepository(prefs1)
+        val repo2 = SecurityStateRepository(prefs2)
+
+        // Clear any leftover latch
+        repo1.consumeStateTamperFlag()
+
+        // Inject corrupt data into repo1's store
+        prefs1.edit().putString("security_state", "enc:corrupted_blob").commit()
+        repo1.getSecurityState()
+
+        // Verify repo2 (watchdog/audit stand-in) immediately observes the tamper
+        assertTrue("repo2 must observe tamper triggered via repo1", repo2.consumeStateTamperFlag())
+        assertFalse("flag should now be cleared for repo1", repo1.consumeStateTamperFlag())
+        assertFalse("flag should now be cleared for repo2", repo2.consumeStateTamperFlag())
     }
 }

@@ -99,6 +99,7 @@ class PostureAuditSelfDefenseTest {
 
     @Before
     fun setUp() {
+        com.airgate.data.repository.ProtectedPrefsStore.consumeProcessTamperFlag()
         tempDir = File(System.getProperty("java.io.tmpdir"), "ag_posture_audit_${System.currentTimeMillis()}")
         tempDir.mkdirs()
         dummyContext = DummyContext(tempDir)

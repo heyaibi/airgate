@@ -53,6 +53,21 @@ internal class ProtectedPrefsStore(
     companion object {
         private const val ENC_PREFIX = "enc:"
         private const val ENCRYPTED_PARTS = 3
+        private val processTamperLatch = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        /**
+         * True when any previously integrity-protected value failed to verify/decrypt
+         * across any store instance in the process. Consumed by the periodic audit;
+         * consuming clears the flag atomically.
+         */
+        fun consumeProcessTamperFlag(): Boolean = processTamperLatch.getAndSet(false)
+
+        /**
+         * Latches the process-wide tamper flag.
+         */
+        fun markTampered() {
+            processTamperLatch.set(true)
+        }
     }
 
     private val injectedCrypto: PrefsCrypto? = crypto
@@ -78,18 +93,11 @@ internal class ProtectedPrefsStore(
         }
     }
 
-    @Volatile
-    private var tamperDetected = false
-
     /**
      * True when a previously integrity-protected value failed to verify/decrypt.
-     * Consumed by the periodic audit; consuming clears the flag.
+     * Consumed by the periodic audit; consuming clears the flag across all repository instances.
      */
-    fun consumeTamperFlag(): Boolean {
-        val wasTampered = tamperDetected
-        tamperDetected = false
-        return wasTampered
-    }
+    fun consumeTamperFlag(): Boolean = consumeProcessTamperFlag()
 
     /** Coerces a raw prefs value (string or legacy primitive) to its string form. */
     fun rawToString(value: Any?): String? = when (value) {
@@ -127,7 +135,7 @@ internal class ProtectedPrefsStore(
     fun protectString(key: String, value: String): String {
         val ks = keystore
         if (ks == null) {
-            tamperDetected = true
+            markTampered()
             throw IllegalStateException("no crypto available; refusing to persist '$key' in plaintext")
         }
         return try {
@@ -139,14 +147,14 @@ internal class ProtectedPrefsStore(
                 Base64.getEncoder().encodeToString(ciphertext) + ":" +
                 Base64.getEncoder().encodeToString(mac)
         } catch (e: Exception) {
-            tamperDetected = true
+            markTampered()
             throw IllegalStateException("failed to protect value for key '$key'", e)
         }
     }
 
     fun unprotectString(key: String, stored: String, default: String): String {
         return tryUnprotect(key, stored) ?: run {
-            tamperDetected = true
+            markTampered()
             default
         }
     }
@@ -160,7 +168,7 @@ internal class ProtectedPrefsStore(
     fun readProtectedValueOrNull(key: String): String? {
         val stored = readStoredString(key) ?: return null
         return tryUnprotect(key, stored) ?: run {
-            tamperDetected = true
+            markTampered()
             null
         }
     }
@@ -202,7 +210,7 @@ internal class ProtectedPrefsStore(
             // The value cannot be protected, so it is not persisted at all —
             // never in plaintext. The latched tamper flag surfaces the failure
             // to the periodic audit instead of leaving a silent downgrade.
-            tamperDetected = true
+            markTampered()
         }
     }
 

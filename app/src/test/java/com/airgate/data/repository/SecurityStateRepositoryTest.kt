@@ -73,8 +73,15 @@ class SecurityStateRepositoryTest {
         }
     }
 
-    private val prefs = InMemorySharedPreferences()
-    private val repository = SecurityStateRepository(prefs, JvmPrefsCrypto()) { 0L }
+    private lateinit var prefs: InMemorySharedPreferences
+    private lateinit var repository: SecurityStateRepository
+
+    @org.junit.Before
+    fun setUp() {
+        ProtectedPrefsStore.consumeProcessTamperFlag()
+        prefs = InMemorySharedPreferences()
+        repository = SecurityStateRepository(prefs, JvmPrefsCrypto()) { 0L }
+    }
 
     @Test
     fun `default values are correct`() {
@@ -817,6 +824,19 @@ class SecurityStateRepositoryTest {
         assertFalse("with nothing persisted the PIN cannot be set", broken.isPinSet())
         assertFalse(broken.isPinUsable())
         assertTrue("the refused PIN write must latch the tamper flag", broken.consumeStateTamperFlag())
+    }
+
+    @Test
+    fun `tamper detected in one repository instance is visible across another repository instance`() {
+        val repo1 = SecurityStateRepository(prefs, JvmPrefsCrypto())
+        val repo2 = SecurityStateRepository(InMemorySharedPreferences(), JvmPrefsCrypto("other"))
+
+        prefs.edit().putString("security_state", "enc:broken").apply()
+        repo1.getSecurityState()
+
+        assertTrue("repo2 must see tamper flag raised by repo1", repo2.consumeStateTamperFlag())
+        assertFalse("repo1 must now see cleared flag", repo1.consumeStateTamperFlag())
+        assertFalse("repo2 must also see cleared flag", repo2.consumeStateTamperFlag())
     }
 
     /**
