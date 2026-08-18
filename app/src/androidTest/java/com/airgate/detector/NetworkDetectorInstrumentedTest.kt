@@ -503,15 +503,25 @@ class NetworkDetectorInstrumentedTest {
             val delivered = listener.breaches.map { it.violationType }.toSet()
             assertTrue("the detector callback must deliver at least one breach", delivered.isNotEmpty())
 
-            val derivable = synchronized(controlCaps) {
-                controlCaps.any { caps ->
-                    NetworkDetector.resolveBreaches(caps).map { it.violationType }.toSet() == delivered
-                }
+            // The detector accumulates breaches across every delivered network
+            // callback, so the delivered set is the union of several per-snapshot
+            // breach sets. On a multi-network emulator (cellular + Wi-Fi + virtual)
+            // that union must NOT equal any single snapshot's set — e.g. Wi-Fi
+            // unvalidated contributes WIFI_TRANSCEIVER_ENABLED while a validated
+            // cellular link contributes VALIDATED_NETWORK. The invariant that
+            // holds is one-directional: every delivered breach must be explainable
+            // by at least one capabilities snapshot the framework actually
+            // delivered to a control callback registered for the same request.
+            val controlResolved = synchronized(controlCaps) {
+                controlCaps
+                    .flatMap { caps -> NetworkDetector.resolveBreaches(caps).map { it.violationType } }
+                    .toSet()
             }
             assertTrue(
-                "delivered breaches $delivered must be derivable from a delivered capabilities snapshot " +
-                    "(control captured ${synchronized(controlCaps) { controlCaps.size }} snapshot(s))",
-                derivable
+                "every delivered breach $delivered must be derivable from a delivered capabilities snapshot " +
+                    "(control resolved $controlResolved from " +
+                    "${synchronized(controlCaps) { controlCaps.size }} snapshot(s))",
+                delivered.all { it in controlResolved }
             )
         } finally {
             detector.stopMonitoring()

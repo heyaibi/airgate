@@ -31,6 +31,13 @@ import com.airgate.domain.model.ResponseTier
  * config can be returned without touching the keystore. If prefs are written
  * directly (legacy migration, tests), the fingerprint differs and the cache
  * rebuilds, so the cache can never serve stale data.
+ *
+ * The cache is primed only after a save has been written AND read back to
+ * match: the whole config is committed atomically in a single synchronous
+ * SharedPreferences commit, then every field is re-read and compared to the
+ * requested value. A partial, refused, or corrupting write clears the cache
+ * instead, so the next [getConfig] rebuilds from the actual on-disk state and
+ * never serves a value that never landed.
  */
 internal class AppConfigStore(
     private val prefs: SharedPreferences,
@@ -122,28 +129,43 @@ internal class AppConfigStore(
     }
 
     fun saveConfig(config: AppConfig) {
-        store.protectedPutBoolean(KEY_IS_ENABLED, config.isEnabled)
-        store.protectedPutInt(KEY_WIPE_THRESHOLD, config.wipeThreshold)
-        store.protectedPutInt(KEY_NOTIF_PER_BREACH, config.notificationsPerBreach)
-        store.protectedPutInt(KEY_NOTIF_TAIL_MINS, config.notificationTailMinutes)
-        store.protectedPutInt(KEY_GRACE_WINDOW_SECS, config.graceWindowSeconds)
-        store.protectedPutInt(KEY_SAFETY_NET_MINS, config.safetyNetIntervalMinutes)
-        store.protectedPutInt(KEY_CLOCK_SKEW_MINS, config.clockSkewToleranceMinutes)
-        store.protectedPutBoolean(KEY_INCLUDE_FRP, config.includeFRPData)
-        store.protectedPutBoolean(KEY_AGGRESSIVE_MODE, config.aggressiveMode)
-        store.protectedPutBoolean(KEY_DRY_RUN_MODE, config.dryRunMode)
-        store.protectedPutString(KEY_SELF_TAMPER_TIER, config.selfTamperTier.name)
-        store.protectedPutBoolean(KEY_DEVICE_PROTECTION_ALARM, config.deviceProtectionAlarmEnabled)
-        store.protectedPutBoolean(KEY_BLOCK_DEBUGGING_FEATURES, config.blockDebuggingFeatures)
+        val committed = store.protectedPutAll(
+            listOf(
+                KEY_IS_ENABLED to config.isEnabled.toString(),
+                KEY_WIPE_THRESHOLD to config.wipeThreshold.toString(),
+                KEY_NOTIF_PER_BREACH to config.notificationsPerBreach.toString(),
+                KEY_NOTIF_TAIL_MINS to config.notificationTailMinutes.toString(),
+                KEY_GRACE_WINDOW_SECS to config.graceWindowSeconds.toString(),
+                KEY_SAFETY_NET_MINS to config.safetyNetIntervalMinutes.toString(),
+                KEY_CLOCK_SKEW_MINS to config.clockSkewToleranceMinutes.toString(),
+                KEY_INCLUDE_FRP to config.includeFRPData.toString(),
+                KEY_AGGRESSIVE_MODE to config.aggressiveMode.toString(),
+                KEY_DRY_RUN_MODE to config.dryRunMode.toString(),
+                KEY_SELF_TAMPER_TIER to config.selfTamperTier.name,
+                KEY_DEVICE_PROTECTION_ALARM to config.deviceProtectionAlarmEnabled.toString(),
+                KEY_BLOCK_DEBUGGING_FEATURES to config.blockDebuggingFeatures.toString()
+            )
+        )
         // Purge the removed setting's legacy persisted value (a no-op on fresh
-        // installs), then prime the cache so the next getConfig() skips the keystore.
+        // installs). The legacy purge is best-effort: it is a cleanup of a dead
+        // key and must not gate the cache update.
         store.removeProtected(LEGACY_KEY_USER_UNLOCK_RESETS)
-        configCache = config
-        val snapshot = try {
-            prefs.all
-        } catch (e: Exception) {
-            emptyMap<String, Any?>()
+        // Publish the cache only after a complete write-and-read verification:
+        // the whole batch committed to disk AND every field reads back to the
+        // requested value. A partial, refused, or corrupting write leaves the
+        // cache empty so the next getConfig() rebuilds from the actual on-disk
+        // state instead of serving values that never landed.
+        if (committed && buildConfig() == config) {
+            configCache = config
+            val snapshot = try {
+                prefs.all
+            } catch (e: Exception) {
+                emptyMap<String, Any?>()
+            }
+            configRawCache = configKeys.map { key -> store.rawToString(snapshot[key]) }
+        } else {
+            configCache = null
+            configRawCache = null
         }
-        configRawCache = configKeys.map { key -> store.rawToString(snapshot[key]) }
     }
 }

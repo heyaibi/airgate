@@ -30,7 +30,10 @@ import java.util.Base64
  * If no crypto is available at all (keystore init failure) or an encryption
  * operation throws, protected writes are refused and the failure is latched as
  * a consumable tamper flag — a security-sensitive value is never persisted in
- * the clear.
+ * the clear. [protectedPutAll] additionally batches a set of values into one
+ * atomic synchronous SharedPreferences commit, so a refusal or disk failure
+ * on any member refuses the whole batch: callers can rely on its Boolean being
+ * the real persistence signal rather than an optimistic in-memory apply.
  *
  * Every protected value is stored as `enc:<iv>:<ciphertext>:<mac>` where the
  * MAC is an HMAC-SHA256 over `key || iv || ciphertext` (encrypt-then-MAC) and
@@ -203,15 +206,43 @@ internal class ProtectedPrefsStore(
         }.getOrNull()
     }
 
-    fun protectedPutString(key: String, value: String) {
-        try {
+    fun protectedPutString(key: String, value: String): Boolean {
+        return try {
             prefs.edit { putString(key, protectString(key, value)) }
+            true
         } catch (e: IllegalStateException) {
             // The value cannot be protected, so it is not persisted at all —
             // never in plaintext. The latched tamper flag surfaces the failure
             // to the periodic audit instead of leaving a silent downgrade.
             markTampered()
+            false
         }
+    }
+
+    /**
+     * Encrypts and persists a batch of key/value pairs as a single atomic
+     * SharedPreferences commit.
+     *
+     * Every value is protected (encrypt + keyed-MAC) before anything is
+     * written; if any value cannot be protected the whole batch is refused and
+     * nothing is persisted — never a torn, partially-encrypted state. The
+     * commit is synchronous, so the returned Boolean is the real disk-write
+     * success signal, unlike [protectedPutString] whose asynchronous apply()
+     * cannot report disk failures. A refused or failed commit latches the
+     * tamper flag so the failure reaches the periodic audit.
+     */
+    fun protectedPutAll(entries: List<Pair<String, String>>): Boolean {
+        val protected = try {
+            entries.map { (key, value) -> key to protectString(key, value) }
+        } catch (e: IllegalStateException) {
+            // protectString already latched the tamper flag; nothing was written.
+            return false
+        }
+        val editor = prefs.edit()
+        protected.forEach { (key, blob) -> editor.putString(key, blob) }
+        val committed = editor.commit()
+        if (!committed) markTampered()
+        return committed
     }
 
     fun protectedGetString(key: String, default: String): String {
@@ -219,12 +250,12 @@ internal class ProtectedPrefsStore(
         return unprotectString(key, stored, default)
     }
 
-    fun protectedPutInt(key: String, value: Int) = protectedPutString(key, value.toString())
+    fun protectedPutInt(key: String, value: Int): Boolean = protectedPutString(key, value.toString())
 
     fun protectedGetInt(key: String, default: Int): Int =
         protectedGetString(key, default.toString()).toIntOrNull() ?: default
 
-    fun protectedPutBoolean(key: String, value: Boolean) = protectedPutString(key, value.toString())
+    fun protectedPutBoolean(key: String, value: Boolean): Boolean = protectedPutString(key, value.toString())
 
     fun protectedGetBoolean(key: String, default: Boolean): Boolean =
         protectedGetString(key, default.toString()).toBooleanStrictOrNull() ?: default

@@ -20,8 +20,8 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.airgate.data.crypto.KeystoreManager
-import com.airgate.data.crypto.PinManager
 import com.airgate.data.crypto.PrefsCrypto
+import com.airgate.data.crypto.PinManager
 import com.airgate.domain.model.AppConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -29,112 +29,29 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import com.airgate.testutil.crypto.AndroidKeyStoreRule
-import org.junit.Rule
 
 /**
- * JVM verification (Robolectric SharedPreferences + fake AndroidKeyStore over
- * real JCE crypto) that the
- * removed "reset streak on unlock" setting leaves no trace: saving config never
- * writes its key, an older install's value under that key is purged on save, and
- * a lingering value never disturbs config reads. Uses a throwaway prefs file so
- * no real app state is touched.
+ * On-device verification that the config store's cache gate holds against the
+ * real Android Keystore: a fully successful save is readable by a fresh
+ * repository (process-restart simulation) and never latches the tamper flag,
+ * while a write that fails mid-save must NOT prime the cache — the field whose
+ * write failed comes back as its default, never the requested value.
  */
 @RunWith(AndroidJUnit4::class)
-class AppConfigStoreStorageTest {
-
-    @get:Rule
-    val androidKeyStoreRule = AndroidKeyStoreRule()
-
-    @Before
-    fun resetProcessTamperFlag() {
-        // The tamper flag is process-wide; Robolectric keeps one JVM alive for the
-        // whole class, so each test must start with a clean latch to avoid
-        // cross-test contamination.
-        ProtectedPrefsStore.consumeProcessTamperFlag()
-    }
+class AppConfigStoreInstrumentedTest {
 
     private val context: Context
         get() = ApplicationProvider.getApplicationContext<Context>()
 
-    private val legacyKey = "config_user_unlock_resets"
-
-    @Test
-    fun savingConfig_neverWritesTheRemovedSettingKey_onRealStorage() {
-        val prefs = newPrefs()
-        val repository = SecurityStateRepository(prefs, null, notificationsAllowedProvider = { true })
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
-
-        repository.saveConfig(AppConfig(wipeThreshold = 5))
-
-        assertFalse("the removed key must not be persisted on save", prefs.contains(legacyKey))
-        assertEquals(5, repository.getConfig().wipeThreshold)
+    @Before
+    fun resetProcessTamperFlag() {
+        // The tamper flag is process-wide; instrumented tests share the app
+        // process, so each test starts from a clean latch.
+        ProtectedPrefsStore.consumeProcessTamperFlag()
     }
 
     @Test
-    fun savingConfig_purgesALegacyValue_onRealStorage() {
-        val prefs = newPrefs()
-        // A standalone protected store on the same prefs stands in for the write
-        // an older install made under the removed key.
-        ProtectedPrefsStore(prefs, null).protectedPutBoolean(legacyKey, true)
-        assertTrue("the legacy value must be present before the save", prefs.contains(legacyKey))
-
-        val repository = SecurityStateRepository(prefs, null, notificationsAllowedProvider = { true })
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
-        repository.saveConfig(AppConfig())
-
-        assertFalse("saving config must purge the legacy value on the JVM", prefs.contains(legacyKey))
-    }
-
-    @Test
-    fun aLegacyValue_doesNotDisturbConfigReads_onRealStorage() {
-        val prefs = newPrefs()
-        val repository = SecurityStateRepository(prefs, null, notificationsAllowedProvider = { true })
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
-        repository.saveConfig(AppConfig(wipeThreshold = 7))
-
-        ProtectedPrefsStore(prefs, null).protectedPutBoolean(legacyKey, true)
-
-        // The legacy key sits outside the config fingerprint, so reads keep
-        // returning the saved config and the key stays until the next save.
-        assertEquals(7, repository.getConfig().wipeThreshold)
-        assertTrue(prefs.contains(legacyKey))
-    }
-
-    // --- Cache correctness under write failures (real storage, fake keystore) ---
-
-    @Test
-    fun failedSave_doesNotCacheRequestedConfig_onRealStorage() {
-        // A healthy save persists a config, then a write-failing save on the same
-        // prefs must neither overwrite the disk value nor prime the cache: the
-        // requested wipeThreshold is never observable afterwards.
-        val prefs = newPrefs()
-        val repository = SecurityStateRepository(prefs, null, notificationsAllowedProvider = { true })
-        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
-        repository.saveConfig(AppConfig(wipeThreshold = 13))
-        assertEquals(13, repository.getConfig().wipeThreshold)
-
-        // A second repository over the same prefs whose crypto can read but whose
-        // writes always fail. Same KeystoreManager aliases decrypt the healthy
-        // save's blobs, so a cache miss falls through to the persisted value.
-        val writeThrowing = EncryptThrowingButReadableCrypto()
-        val failingRepository = SecurityStateRepository(prefs, writeThrowing, notificationsAllowedProvider = { true })
-
-        failingRepository.saveConfig(AppConfig(wipeThreshold = 99))
-
-        assertEquals(
-            "a failed save must not surface the refused value",
-            13,
-            failingRepository.getConfig().wipeThreshold
-        )
-        assertTrue("a refused write must latch the tamper flag", failingRepository.consumeStateTamperFlag())
-    }
-
-    @Test
-    fun healthySave_roundTripsThroughRealStorage_andLetsAnotherInstanceRead() {
-        // The positive control for the cache gate: a fully successful save is
-        // readable by a second repository instance (simulating a process restart)
-        // and does not latch a tamper flag.
+    fun healthySave_isReadableByAnotherInstance_andNoTamperFlag() {
         val prefs = newPrefs()
         val repository = SecurityStateRepository(prefs, null, notificationsAllowedProvider = { true })
         repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
@@ -147,7 +64,34 @@ class AppConfigStoreStorageTest {
     }
 
     @Test
-    fun partialFailureSave_refusesWholeBatch_andDoesNotCache_onRealStorage() {
+    fun failedSave_doesNotCacheRequestedConfig() {
+        val prefs = newPrefs()
+        val repository = SecurityStateRepository(prefs, null, notificationsAllowedProvider = { true })
+        repository.savePin(byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6), PinManager.DEFAULT_ITERATIONS, PinManager.DEFAULT_ALGORITHM)
+        repository.saveConfig(AppConfig(wipeThreshold = 13))
+        assertEquals(13, repository.getConfig().wipeThreshold)
+
+        // A second repository whose writes always fail but whose reads delegate
+        // to the real keystore (same aliases), so a cache miss falls through to
+        // the persisted value.
+        val failingRepository = SecurityStateRepository(
+            prefs,
+            EncryptThrowingButReadableCrypto(),
+            notificationsAllowedProvider = { true }
+        )
+
+        failingRepository.saveConfig(AppConfig(wipeThreshold = 99))
+
+        assertEquals(
+            "a failed save must not surface the refused value",
+            13,
+            failingRepository.getConfig().wipeThreshold
+        )
+        assertTrue("a refused write must latch the tamper flag", failingRepository.consumeStateTamperFlag())
+    }
+
+    @Test
+    fun partialFailureSave_refusesWholeBatch_andDoesNotCache() {
         // Crypto that fails on the third write. The config is persisted as one
         // atomic batch, so a failure on any field refuses the whole batch: even
         // the fields protected before the failure must not land on disk, and the
@@ -167,9 +111,8 @@ class AppConfigStoreStorageTest {
         val prefs = newPrefs()
         val repository = SecurityStateRepository(prefs, partialCrypto, notificationsAllowedProvider = { true })
 
-        // isEnabled stays false, so the arming guards in saveConfig do not apply
-        // and no PIN material is needed — the encrypt counter then counts only
-        // the config writes.
+        // isEnabled stays false, so the arming guards do not apply and no PIN is
+        // needed — the encrypt counter counts only the config writes.
         repository.saveConfig(AppConfig(wipeThreshold = 99, notificationsPerBreach = 77))
 
         val config = repository.getConfig()
@@ -187,7 +130,7 @@ class AppConfigStoreStorageTest {
     }
 
     @Test
-    fun writeThatDoesNotReadBack_isNotCached_onRealStorage() {
+    fun writeThatDoesNotReadBack_isNotCached() {
         // Crypto that encrypts successfully (the batch commits) but stores a
         // wrong plaintext. The commit alone "succeeds", but the write-and-read
         // verification must refuse to prime the cache: getConfig() returns the
@@ -213,10 +156,18 @@ class AppConfigStoreStorageTest {
         )
     }
 
+    private fun newPrefs(): android.content.SharedPreferences {
+        val prefs = context.getSharedPreferences(
+            "app_config_instrumented_${System.currentTimeMillis()}",
+            Context.MODE_PRIVATE
+        )
+        prefs.edit().clear().commit()
+        return prefs
+    }
+
     /**
      * A [PrefsCrypto] whose reads delegate to the real keystore-backed manager
-     * (so existing blobs decrypt) but whose encrypt always throws — standing in
-     * for a keystore that can read but cannot write new values.
+     * (so existing blobs decrypt) but whose encrypt always throws.
      */
     private class EncryptThrowingButReadableCrypto : PrefsCrypto {
         private val delegate = KeystoreManager()
@@ -225,14 +176,5 @@ class AppConfigStoreStorageTest {
         override fun decrypt(ciphertext: ByteArray, iv: ByteArray, aad: ByteArray): ByteArray =
             delegate.decrypt(ciphertext, iv, aad)
         override fun hmac(data: ByteArray): ByteArray = delegate.hmac(data)
-    }
-
-    private fun newPrefs(): android.content.SharedPreferences {
-        val prefs = context.getSharedPreferences(
-            "app_config_instrumented_${System.currentTimeMillis()}",
-            Context.MODE_PRIVATE
-        )
-        prefs.edit().clear().commit()
-        return prefs
     }
 }

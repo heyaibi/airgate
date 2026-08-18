@@ -37,7 +37,7 @@ import javax.crypto.AEADBadTagException
  */
 class ProtectedPrefsStoreTest {
 
-    private class MockSharedPreferences : android.content.SharedPreferences {
+    private class MockSharedPreferences(private val commitSucceeds: Boolean = true) : android.content.SharedPreferences {
         private val map = mutableMapOf<String, Any?>()
         override fun getAll(): MutableMap<String, *> = map
         override fun getString(key: String?, defValue: String?): String? = (map[key] as? String) ?: defValue
@@ -47,11 +47,14 @@ class ProtectedPrefsStoreTest {
         override fun getFloat(key: String?, defValue: Float): Float = (map[key] as? Float) ?: defValue
         override fun getBoolean(key: String?, defValue: Boolean): Boolean = (map[key] as? Boolean) ?: defValue
         override fun contains(key: String?): Boolean = map.containsKey(key)
-        override fun edit(): android.content.SharedPreferences.Editor = Editor(map)
+        override fun edit(): android.content.SharedPreferences.Editor = Editor(map, commitSucceeds)
         override fun registerOnSharedPreferenceChangeListener(listener: android.content.SharedPreferences.OnSharedPreferenceChangeListener?) {}
         override fun unregisterOnSharedPreferenceChangeListener(listener: android.content.SharedPreferences.OnSharedPreferenceChangeListener?) {}
 
-        private class Editor(private val map: MutableMap<String, Any?>) : android.content.SharedPreferences.Editor {
+        private class Editor(
+            private val map: MutableMap<String, Any?>,
+            private val commitSucceeds: Boolean
+        ) : android.content.SharedPreferences.Editor {
             private val tempMap = mutableMapOf<String, Any?>()
             private var clearFlag = false
             override fun putString(key: String?, value: String?): android.content.SharedPreferences.Editor { tempMap[key!!] = value; return this }
@@ -62,7 +65,11 @@ class ProtectedPrefsStoreTest {
             override fun putBoolean(key: String?, value: Boolean): android.content.SharedPreferences.Editor { tempMap[key!!] = value; return this }
             override fun remove(key: String?): android.content.SharedPreferences.Editor { tempMap[key!!] = null; return this }
             override fun clear(): android.content.SharedPreferences.Editor { clearFlag = true; return this }
-            override fun commit(): Boolean { apply(); return true }
+            override fun commit(): Boolean {
+                if (!commitSucceeds) return false
+                apply()
+                return true
+            }
             override fun apply() {
                 if (clearFlag) map.clear()
                 tempMap.forEach { (k, v) -> if (v == null) map.remove(k) else map[k] = v }
@@ -348,11 +355,20 @@ class ProtectedPrefsStoreTest {
     }
 
     @Test
+    fun protectedPutString_returnsTrueOnSuccess() {
+        val result = store.protectedPutString("k", "VALUE")
+
+        assertTrue("a successful write must return true", result)
+        assertEquals("VALUE", store.protectedGetString("k", "DEFAULT"))
+    }
+
+    @Test
     fun keystoreUnavailable_protectedPutString_refusesToPersist_andLatchesTamperFlag() {
         val fallback = storeWithFallback()
 
-        fallback.protectedPutString("k", "PLAIN")
+        val result = fallback.protectedPutString("k", "PLAIN")
 
+        assertFalse("a refused write must return false", result)
         assertNull("a refused write must never persist the value", prefs.getString("k", null))
         assertTrue("a refused write must set the tamper flag", fallback.consumeTamperFlag())
     }
@@ -361,8 +377,9 @@ class ProtectedPrefsStoreTest {
     fun keystoreUnavailable_protectedPutInt_refusesToPersist_andLatchesTamperFlag() {
         val fallback = storeWithFallback()
 
-        fallback.protectedPutInt("k", 7)
+        val result = fallback.protectedPutInt("k", 7)
 
+        assertFalse("a refused write must return false", result)
         assertNull("a refused write must never persist an int as plaintext", prefs.getString("k", null))
         assertTrue(fallback.consumeTamperFlag())
     }
@@ -371,8 +388,9 @@ class ProtectedPrefsStoreTest {
     fun keystoreUnavailable_protectedPutBoolean_refusesToPersist_andLatchesTamperFlag() {
         val fallback = storeWithFallback()
 
-        fallback.protectedPutBoolean("k", true)
+        val result = fallback.protectedPutBoolean("k", true)
 
+        assertFalse("a refused write must return false", result)
         assertNull("a refused write must never persist a boolean as plaintext", prefs.getString("k", null))
         assertTrue(fallback.consumeTamperFlag())
     }
@@ -468,8 +486,9 @@ class ProtectedPrefsStoreTest {
         val prefsF = MockSharedPreferences()
         val failing = ProtectedPrefsStore(prefsF, EncryptThrowingPrefsCrypto())
 
-        failing.protectedPutString("k", "SECRET")
+        val result = failing.protectedPutString("k", "SECRET")
 
+        assertFalse("an encrypt failure must return false", result)
         assertNull("an encrypt failure must never fall back to plaintext", prefsF.getString("k", null))
         assertTrue("an encrypt failure must set the tamper flag", failing.consumeTamperFlag())
     }
@@ -479,8 +498,9 @@ class ProtectedPrefsStoreTest {
         val prefsF = MockSharedPreferences()
         val failing = ProtectedPrefsStore(prefsF, HmacThrowingPrefsCrypto())
 
-        failing.protectedPutString("k", "SECRET")
+        val result = failing.protectedPutString("k", "SECRET")
 
+        assertFalse("an hmac failure must return false", result)
         assertNull("an hmac failure must never fall back to plaintext", prefsF.getString("k", null))
         assertTrue("an hmac failure must set the tamper flag", failing.consumeTamperFlag())
     }
@@ -495,6 +515,93 @@ class ProtectedPrefsStoreTest {
 
         assertEquals("DEFAULT", failing.unprotectString("k", blob, "DEFAULT"))
         assertTrue(failing.consumeTamperFlag())
+    }
+
+    // --- protectedPutAll (atomic batch commit) ---
+
+    @Test
+    fun protectedPutAll_allEntries_persistAndRoundTrip() {
+        val result = store.protectedPutAll(listOf("k1" to "V1", "k2" to "V2", "k3" to "V3"))
+
+        assertTrue("a healthy batch must commit successfully", result)
+        assertEquals("V1", store.protectedGetString("k1", "DEFAULT"))
+        assertEquals("V2", store.protectedGetString("k2", "DEFAULT"))
+        assertEquals("V3", store.protectedGetString("k3", "DEFAULT"))
+        assertFalse("a healthy batch must not latch the tamper flag", store.consumeTamperFlag())
+    }
+
+    @Test
+    fun protectedPutAll_emptyBatch_commitsSuccessfully() {
+        assertTrue(store.protectedPutAll(emptyList()))
+        assertFalse(store.consumeTamperFlag())
+    }
+
+    @Test
+    fun protectedPutAll_keystoreUnavailable_refusesWholeBatch() {
+        val fallback = storeWithFallback()
+
+        val result = fallback.protectedPutAll(listOf("k1" to "V1", "k2" to "V2"))
+
+        assertFalse("a refused batch must return false", result)
+        assertNull("no entry may persist when the batch is refused", prefs.getString("k1", null))
+        assertNull("no entry may persist when the batch is refused", prefs.getString("k2", null))
+        assertTrue(fallback.consumeTamperFlag())
+    }
+
+    @Test
+    fun protectedPutAll_encryptFailure_midBatch_refusesWholeBatch() {
+        // Crypto that throws on the second protect: the whole batch must be
+        // refused atomically — the first entry must not be persisted either.
+        var calls = 0
+        val partialCrypto = object : PrefsCrypto {
+            private val delegate = JvmPrefsCrypto()
+            override fun encrypt(data: ByteArray, aad: ByteArray): Pair<ByteArray, ByteArray> {
+                calls++
+                if (calls == 2) throw IllegalStateException("injected failure")
+                return delegate.encrypt(data, aad)
+            }
+            override fun decrypt(ciphertext: ByteArray, iv: ByteArray, aad: ByteArray): ByteArray =
+                delegate.decrypt(ciphertext, iv, aad)
+            override fun hmac(data: ByteArray): ByteArray = delegate.hmac(data)
+        }
+        val prefsF = MockSharedPreferences()
+        val failing = ProtectedPrefsStore(prefsF, partialCrypto)
+
+        val result = failing.protectedPutAll(listOf("k1" to "V1", "k2" to "V2", "k3" to "V3"))
+
+        assertFalse("a mid-batch encrypt failure must refuse the whole batch", result)
+        assertNull("the entry protected before the failure must not be persisted", prefsF.getString("k1", null))
+        assertNull("the failed entry must not be persisted", prefsF.getString("k2", null))
+        assertNull("the entry after the failure must not be persisted", prefsF.getString("k3", null))
+        assertTrue("a refused batch must latch the tamper flag", failing.consumeTamperFlag())
+    }
+
+    @Test
+    fun protectedPutAll_hmacFailure_refusesWholeBatch() {
+        val prefsF = MockSharedPreferences()
+        val failing = ProtectedPrefsStore(prefsF, HmacThrowingPrefsCrypto())
+
+        val result = failing.protectedPutAll(listOf("k1" to "V1", "k2" to "V2"))
+
+        assertFalse("an hmac failure must refuse the whole batch", result)
+        assertNull(prefsF.getString("k1", null))
+        assertNull(prefsF.getString("k2", null))
+        assertTrue(failing.consumeTamperFlag())
+    }
+
+    @Test
+    fun protectedPutAll_commitFailure_returnsFalse_andLatchesTamperFlag() {
+        // A prefs whose commit() fails at the disk layer: encryption succeeded
+        // for every entry, but the atomic commit reports failure. The batch must
+        // report false (the caller must not treat it as persisted) and latch the
+        // tamper flag.
+        val prefsF = MockSharedPreferences(commitSucceeds = false)
+        val failing = ProtectedPrefsStore(prefsF, JvmPrefsCrypto())
+
+        val result = failing.protectedPutAll(listOf("k1" to "V1"))
+
+        assertFalse("a failed commit must return false", result)
+        assertTrue("a failed commit must latch the tamper flag", failing.consumeTamperFlag())
     }
 
     @Test
