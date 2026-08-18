@@ -109,7 +109,14 @@ class SecurityStateRepository(
         return getPinData() != null
     }
 
-    fun savePin(pinHash: ByteArray, salt: ByteArray, iterations: Int, algorithm: String) =
+    /**
+     * Persists the complete PIN credential as one atomic, versioned record.
+     *
+     * @return true when the credential was durably persisted; false when the
+     *   write was refused or failed, in which case the previous credential (if
+     *   any) remains usable.
+     */
+    fun savePin(pinHash: ByteArray, salt: ByteArray, iterations: Int, algorithm: String): Boolean =
         pinStore.savePin(pinHash, salt, iterations, algorithm)
 
     fun getPinData(): PinData? = pinStore.getPinData()

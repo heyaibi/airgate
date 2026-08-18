@@ -37,8 +37,7 @@ class AuthPinRecoveryRepositoryTest {
 
     private fun corruptPinMaterial() {
         prefs.edit()
-            .putString("pin_hash", "enc:broken")
-            .putString("pin_salt", "enc:broken")
+            .putString("pin_record", "enc:broken")
             .apply()
     }
 

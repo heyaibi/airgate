@@ -160,7 +160,7 @@ class PostureAuditSelfDefenseTest {
      * the always-on leg's own detection rather than on the setup read.
      */
     private fun corruptPinMaterial(): Unit {
-        prefs.edit().putString("pin_hash", "enc:broken").putString("pin_salt", "enc:broken").commit()
+        prefs.edit().putString("pin_record", "enc:broken").commit()
         assertTrue(repository.isPinSet())
         assertFalse(repository.isPinUsable())
         repository.consumeStateTamperFlag()
@@ -573,7 +573,7 @@ class PostureAuditSelfDefenseTest {
         // A never-configured PIN is the fresh-install path (the owner is setting a
         // PIN for the first time), not tampering.
         repository.saveConfig(disabledConfig(deviceProtectionAlarmEnabled = true))
-        prefs.edit().remove("pin_hash").remove("pin_salt").commit()
+        prefs.edit().remove("pin_record").commit()
         assertFalse(repository.isPinSet())
 
         val result = defaultAudit().checkTamperOnly()

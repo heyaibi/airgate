@@ -251,9 +251,10 @@ class SecurityStateRepositoryTest {
         assertTrue(repository.saveConfig(AppConfig(isEnabled = true)).isEnabled)
         assertTrue(repository.getConfig().isEnabled)
 
+        // The record becomes unreadable (tamper/corruption) on top of the armed
+        // state; the always-on PIN gate must disarm the device on the next save.
         prefs.edit()
-            .putString("pin_hash", "enc:broken")
-            .putString("pin_salt", "enc:broken")
+            .putString("pin_record", "enc:broken")
             .apply()
         assertFalse(repository.isPinUsable())
 
@@ -824,6 +825,53 @@ class SecurityStateRepositoryTest {
         assertFalse("with nothing persisted the PIN cannot be set", broken.isPinSet())
         assertFalse(broken.isPinUsable())
         assertTrue("the refused PIN write must latch the tamper flag", broken.consumeStateTamperFlag())
+    }
+
+    @Test
+    fun `a successful pin save reports true`() {
+        val result = repository.savePin(
+            byteArrayOf(1, 2, 3),
+            byteArrayOf(4, 5, 6),
+            PinManager.DEFAULT_ITERATIONS,
+            PinManager.DEFAULT_ALGORITHM
+        )
+
+        assertTrue("a durably persisted credential must report success", result)
+        assertTrue(repository.isPinSet())
+        assertTrue(repository.isPinUsable())
+    }
+
+    @Test
+    fun `a refused pin save keeps the prior credential usable`() {
+        // The old credential is only replaced when the new one is durably
+        // written: a refused save must leave the owner able to authenticate
+        // with the previous PIN, never bricked or silently unset.
+        assertTrue(
+            repository.savePin(
+                byteArrayOf(1, 2, 3),
+                byteArrayOf(4, 5, 6),
+                PinManager.DEFAULT_ITERATIONS,
+                PinManager.DEFAULT_ALGORITHM
+            )
+        )
+
+        val broken = SecurityStateRepository(prefs, FailingPrefsCrypto())
+        val refused = broken.savePin(
+            byteArrayOf(7, 7, 7),
+            byteArrayOf(8, 8, 8),
+            PinManager.DEFAULT_ITERATIONS,
+            PinManager.DEFAULT_ALGORITHM
+        )
+
+        assertFalse("a refused pin save must report failure", refused)
+        assertTrue("the prior credential must remain set", repository.isPinSet())
+        assertTrue("the prior credential must remain usable", repository.isPinUsable())
+        assertEquals(
+            "the prior credential must still verify the old PIN",
+            byteArrayOf(1, 2, 3).toList(),
+            repository.getPinData()?.hash?.toList()
+        )
+        assertTrue("the refused save must latch the tamper flag", broken.consumeStateTamperFlag())
     }
 
     @Test

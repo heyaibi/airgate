@@ -213,7 +213,18 @@ fun PinManagementScreen(
                         scope.launch {
                             val salt = withContext(Dispatchers.Default) { pinManager.generateSalt() }
                             val hash = withContext(Dispatchers.Default) { pinManager.hashPin(newPin, salt) }
-                            repository.savePin(
+                            // Re-derive the hash from the typed PIN and confirm it matches
+                            // before anything is persisted: never commit a credential that
+                            // cannot verify the PIN it is meant to represent.
+                            val saved = withContext(Dispatchers.Default) {
+                                pinManager.verifyPin(
+                                    newPin,
+                                    salt,
+                                    hash,
+                                    PinManager.DEFAULT_ITERATIONS,
+                                    PinManager.DEFAULT_ALGORITHM
+                                )
+                            } && repository.savePin(
                                 hash,
                                 salt,
                                 PinManager.DEFAULT_ITERATIONS,
@@ -221,10 +232,15 @@ fun PinManagementScreen(
                             )
 
                             isSubmitting = false
-                            newPinText = ""
-                            confirmPinText = ""
-                            errorMessage = ""
-                            successMessage = "PIN updated successfully"
+                            if (saved) {
+                                newPinText = ""
+                                confirmPinText = ""
+                                errorMessage = ""
+                                successMessage = "PIN updated successfully"
+                            } else {
+                                errorMessage = "Could not save PIN. Please try again."
+                                successMessage = ""
+                            }
                         }
                     }
                 },

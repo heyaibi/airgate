@@ -46,8 +46,7 @@ class AuthPinSubmitDecisionTest {
 
     private fun corruptPinMaterial() {
         prefs.edit()
-            .putString("pin_hash", "enc:broken")
-            .putString("pin_salt", "enc:broken")
+            .putString("pin_record", "enc:broken")
             .apply()
     }
 
@@ -141,9 +140,9 @@ class AuthPinSubmitDecisionTest {
     @Test
     fun `a partially corrupted pin store fails closed as PinUnreadable`() {
         setReadablePin("123456")
-        // Break only the hash blob; the salt stays readable. Incomplete material
-        // is still unreadable — never a wrong guess.
-        prefs.edit().putString("pin_hash", "enc:broken").apply()
+        // Break the single credential record; incomplete/unreadable material is
+        // still unreadable — never a wrong guess.
+        prefs.edit().putString("pin_record", "enc:broken").apply()
 
         assertTrue(repository.isPinSet())
         assertFalse(repository.isPinUsable())

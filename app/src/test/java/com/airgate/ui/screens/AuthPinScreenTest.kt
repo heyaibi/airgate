@@ -32,7 +32,9 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.airgate.data.crypto.PinManager
+import com.airgate.data.crypto.PrefsCrypto
 import com.airgate.data.repository.PinLockoutPolicy
+import com.airgate.data.repository.ProtectedPrefsStore
 import com.airgate.data.repository.SecurityStateRepository
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -112,6 +114,34 @@ class AuthPinScreenTest {
         composeRule.onNodeWithText("PINs do not match", substring = true).performScrollTo().assertIsDisplayed()
         assertFalse(authenticated.value)
         assertFalse(repository.isPinSet())
+    }
+
+    @Test
+    fun setupMode_saveFailure_showsErrorAndDoesNotAuthenticate() {
+        // A keystore that cannot write must surface as an error instead of
+        // pretending the PIN was set: the owner is told the save failed and is
+        // never left believing a PIN exists that was never persisted.
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences(
+            "auth_pin_screen_failing_${System.currentTimeMillis()}",
+            Context.MODE_PRIVATE
+        )
+        prefs.edit().clear().commit()
+        val repository = SecurityStateRepository(prefs, FailingPrefsCrypto())
+        val authenticated = mutableStateOf(false)
+        launchScreen(repository) { authenticated.value = true }
+
+        composeRule.onNode(hasText("New PIN (6+ digits)")).performTextReplacement(PIN)
+        composeRule.onNode(hasText("Confirm PIN")).performTextReplacement(PIN)
+        composeRule.onNodeWithText("Set PIN & Continue").performScrollTo().performClick()
+
+        composeRule.waitUntil(timeoutMillis = 15_000) {
+            composeRule.onAllNodesWithText("Could not save PIN", substring = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        assertFalse(authenticated.value)
+        assertFalse(repository.isPinSet())
+        assertTrue(repository.consumeStateTamperFlag())
     }
 
     @Test
@@ -285,11 +315,10 @@ class AuthPinScreenTest {
         assertEquals(2, repository.getPinFailedAttempts())
         assertTrue(repository.getPinLockoutRemainingMs() > 0L)
 
-        // The material becomes unreadable (tamper/corruption) on top of the stale
+        // The PIN record becomes unreadable (tamper/corruption) on top of the stale
         // lockout; recovery must supersede it, never inherit it.
         prefs.edit()
-            .putString("pin_hash", "enc:broken")
-            .putString("pin_salt", "enc:broken")
+            .putString("pin_record", "enc:broken")
             .commit()
         val corrupted = SecurityStateRepository(prefs)
         assertFalse(corrupted.isPinUsable())
@@ -333,6 +362,19 @@ class AuthPinScreenTest {
                 onAuthenticated = onAuthenticated
             )
         }
+    }
+
+    /**
+     * A [PrefsCrypto] whose every operation throws, standing in for a keystore
+     * that is present but cannot write — every protected save is refused.
+     */
+    private class FailingPrefsCrypto : PrefsCrypto {
+        override fun encrypt(data: ByteArray, aad: ByteArray): Pair<ByteArray, ByteArray> =
+            throw IllegalStateException("encrypt failed")
+        override fun decrypt(ciphertext: ByteArray, iv: ByteArray, aad: ByteArray): ByteArray =
+            throw IllegalStateException("decrypt failed")
+        override fun hmac(data: ByteArray): ByteArray =
+            throw IllegalStateException("hmac failed")
     }
 
     private companion object {

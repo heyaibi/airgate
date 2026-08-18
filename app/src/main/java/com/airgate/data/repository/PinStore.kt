@@ -75,6 +75,23 @@ internal class PinStore(
     private val clock: MonotonicClock
 ) {
     companion object {
+        /**
+         * Single key holding the complete PIN credential as one encrypted,
+         * versioned blob. Keeping the whole credential under one key is what
+         * makes a save atomic: a crash or refused write can leave either the
+         * previous complete record or the new one, never a torn hash-salt pair.
+         */
+        private const val KEY_PIN_RECORD = "pin_record"
+
+        /** Format version prefix of the decrypted record blob. */
+        private const val RECORD_VERSION = "v1"
+
+        /** Record layout: v1:<salt>:<iterations>:<algorithm>:<hash>. */
+        private const val RECORD_FIELDS = 5
+
+        // Legacy keys from installs predating the single-record format. They are
+        // still read so an upgrade never bricks an existing credential; once a
+        // save writes the record, the record is the only source of truth.
         private const val KEY_PIN_HASH = "pin_hash"
         private const val KEY_PIN_SALT = "pin_salt"
         private const val KEY_PIN_ITERATIONS = "pin_iterations"
@@ -85,26 +102,43 @@ internal class PinStore(
         /**
          * Process-wide monitor serializing the failed-attempt counter's
          * read-modify-write and the lockout-state transitions (reset, deadline
-         * write) across all store instances. The PIN hash/salt are single writes,
-         * not counters, so they are not covered by this lock.
+         * write) across all store instances. The PIN record is a single atomic
+         * write, not a counter, so it is not covered by this lock.
          */
         private val lockoutLock = Any()
     }
 
     fun isPinSet(): Boolean {
+        if (prefs.contains(KEY_PIN_RECORD)) return true
         return prefs.contains(KEY_PIN_HASH) && prefs.contains(KEY_PIN_SALT)
     }
 
-    fun savePin(pinHash: ByteArray, salt: ByteArray, iterations: Int, algorithm: String) {
-        store.protectedPutString(KEY_PIN_HASH, Base64.getEncoder().encodeToString(pinHash))
-        store.protectedPutString(KEY_PIN_SALT, Base64.getEncoder().encodeToString(salt))
-        prefs.edit {
-            putInt(KEY_PIN_ITERATIONS, iterations)
-            putString(KEY_PIN_ALGORITHM, algorithm)
-        }
+    /**
+     * Persists the complete PIN credential as one atomic, versioned record.
+     *
+     * The record is built and validated in memory first, then committed in a
+     * single synchronous [ProtectedPrefsStore.protectedPutAll] write whose
+     * Boolean is the real durable signal. When the write is refused or fails,
+     * nothing is persisted and the previous credential remains fully usable —
+     * a crash or keystore failure can never leave a half-written credential.
+     *
+     * @return true when the record was durably persisted; false when the record
+     *   was refused (invalid fields, no usable crypto, or a failed commit).
+     */
+    fun savePin(pinHash: ByteArray, salt: ByteArray, iterations: Int, algorithm: String): Boolean {
+        val record = buildRecord(pinHash, salt, iterations, algorithm) ?: return false
+        return store.protectedPutAll(listOf(KEY_PIN_RECORD to record))
     }
 
     fun getPinData(): PinData? {
+        if (prefs.contains(KEY_PIN_RECORD)) {
+            // The record is the source of truth when present. A present-but-
+            // unreadable record is tamper/corruption and fails closed: it never
+            // falls through to a legacy credential, so a downgrade cannot mask
+            // a corrupted record.
+            val record = store.readProtectedValueOrNull(KEY_PIN_RECORD) ?: return null
+            return parseRecord(record)
+        }
         val hashB64 = store.unprotectString(KEY_PIN_HASH, prefs.getString(KEY_PIN_HASH, null) ?: return null, "")
         val saltB64 = store.unprotectString(KEY_PIN_SALT, prefs.getString(KEY_PIN_SALT, null) ?: return null, "")
         if (hashB64.isEmpty() || saltB64.isEmpty()) return null
@@ -167,5 +201,40 @@ internal class PinStore(
         val deadline = getPinLockoutUntil()
         if (deadline <= 0L) return 0L
         return (deadline - clock.now()).coerceAtLeast(0L)
+    }
+
+    /**
+     * Serializes a credential into the versioned record form, refusing a record
+     * that could never verify a PIN (empty salt/hash, no algorithm, non-positive
+     * iteration count). Returns null for such a credential so nothing invalid is
+     * ever committed.
+     */
+    private fun buildRecord(pinHash: ByteArray, salt: ByteArray, iterations: Int, algorithm: String): String? {
+        if (pinHash.isEmpty() || salt.isEmpty() || iterations <= 0 || algorithm.isEmpty()) return null
+        return listOf(
+            RECORD_VERSION,
+            Base64.getEncoder().encodeToString(salt),
+            iterations.toString(),
+            Base64.getEncoder().encodeToString(algorithm.toByteArray(Charsets.UTF_8)),
+            Base64.getEncoder().encodeToString(pinHash)
+        ).joinToString(":")
+    }
+
+    /**
+     * Parses a versioned record into its credential, returning null for a
+     * malformed, empty, or unsupported record. Every field is base64 (or a
+     * plain integer), so ':' is never a field delimiter.
+     */
+    private fun parseRecord(record: String): PinData? {
+        val parts = record.split(':')
+        if (parts.size != RECORD_FIELDS || parts[0] != RECORD_VERSION) return null
+        val salt = runCatching { Base64.getDecoder().decode(parts[1]) }.getOrNull() ?: return null
+        val iterations = parts[2].toIntOrNull() ?: return null
+        val algorithm = runCatching {
+            String(Base64.getDecoder().decode(parts[3]), Charsets.UTF_8)
+        }.getOrNull() ?: return null
+        val hash = runCatching { Base64.getDecoder().decode(parts[4]) }.getOrNull() ?: return null
+        if (salt.isEmpty() || hash.isEmpty() || algorithm.isEmpty() || iterations <= 0) return null
+        return PinData(hash, salt, iterations, algorithm)
     }
 }

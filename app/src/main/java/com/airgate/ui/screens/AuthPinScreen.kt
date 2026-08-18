@@ -226,26 +226,41 @@ fun AuthPinScreen(
                             scope.launch {
                                 val salt = withContext(Dispatchers.Default) { pinManager.generateSalt() }
                                 val hash = withContext(Dispatchers.Default) { pinManager.hashPin(newPin, salt) }
-                                repository.savePin(
+                                // Re-derive the hash from the typed PIN and confirm it matches
+                                // before anything is persisted: never commit a credential that
+                                // cannot verify the PIN it is meant to represent.
+                                val saved = withContext(Dispatchers.Default) {
+                                    pinManager.verifyPin(
+                                        newPin,
+                                        salt,
+                                        hash,
+                                        PinManager.DEFAULT_ITERATIONS,
+                                        PinManager.DEFAULT_ALGORITHM
+                                    )
+                                } && repository.savePin(
                                     hash,
                                     salt,
                                     PinManager.DEFAULT_ITERATIONS,
                                     PinManager.DEFAULT_ALGORITHM
                                 )
-                                // A fresh credential supersedes any earlier failures: entering
-                                // with the new PIN must not inherit a stale lockout or counter.
-                                repository.resetPinFailedAttempts()
-                                repository.setPinLockoutUntil(0L)
                                 isSubmitting = false
-                                // Alarm full-screen notifications are a hard requirement
-                                // on 13+; request the runtime permission at PIN setup time.
-                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                                    activity?.requestPermissions(
-                                        arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
-                                        100
-                                    )
+                                if (saved) {
+                                    // A fresh credential supersedes any earlier failures: entering
+                                    // with the new PIN must not inherit a stale lockout or counter.
+                                    repository.resetPinFailedAttempts()
+                                    repository.setPinLockoutUntil(0L)
+                                    // Alarm full-screen notifications are a hard requirement
+                                    // on 13+; request the runtime permission at PIN setup time.
+                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                                        activity?.requestPermissions(
+                                            arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                                            100
+                                        )
+                                    }
+                                    onAuthenticated()
+                                } else {
+                                    errorMessage = "Could not save PIN. Please try again."
                                 }
-                                onAuthenticated()
                             }
                         }
                     } else if (pinUnreadable) {
